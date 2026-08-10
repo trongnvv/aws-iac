@@ -1,0 +1,10 @@
+{
+  "name": "lab-01",
+  "version": "0.1.0",
+  "description": "A tiny quote service.",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {}
+}
