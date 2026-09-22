@@ -11,12 +11,19 @@ module "eks" {
   vpc_id     = local.vpc_id
   subnet_ids = local.app_subnet_ids
 
-  cluster_endpoint_public_access       = true
+  cluster_endpoint_public_access       = var.cluster_endpoint_public_access
+  cluster_endpoint_private_access      = var.cluster_endpoint_private_access
   cluster_endpoint_public_access_cidrs = var.endpoint_public_access_cidrs
 
   # Access Entries (API), not the aws-auth ConfigMap; applying identity gets admin.
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
+
+  # P0 toggles (env-driven).
+  cluster_enabled_log_types = var.enable_control_plane_logging ? var.control_plane_log_types : []
+
+  create_kms_key            = var.enable_secret_encryption
+  cluster_encryption_config = var.enable_secret_encryption ? { resources = ["secrets"] } : {}
 
   cluster_addons = {
     coredns    = {}

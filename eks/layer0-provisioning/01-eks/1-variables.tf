@@ -14,10 +14,36 @@ variable "cluster_version" {
   default = "1.32"
 }
 
+# API endpoint access — toggle per env. Public on = lab-friendly; a locked-down
+# env sets public=false + private=true (reach the API via bastion/VPN/SSM).
+variable "cluster_endpoint_public_access" {
+  default = true
+}
+
+variable "cluster_endpoint_private_access" {
+  default = true
+}
+
 # Lock to your IP (["<YOUR_IP>/32"]). 0.0.0.0/0 leaves the endpoint reachable
 # by anyone (still authenticated, but open).
 variable "endpoint_public_access_cidrs" {
   default = ["0.0.0.0/0"]
+}
+
+# Stream control-plane logs (audit trail) to CloudWatch. Off by default —
+# CloudWatch ingest costs money; enable per-env (tfvars) where you need the audit trail.
+variable "enable_control_plane_logging" {
+  default = false
+}
+
+variable "control_plane_log_types" {
+  default = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+}
+
+# Envelope-encrypt Kubernetes Secrets in etcd with a KMS key the module creates.
+# Off by default — KMS key ~$1/mo; enable in regulated/prod env (tfvars).
+variable "enable_secret_encryption" {
+  default = false
 }
 
 # /28 prefixes instead of single IPs → ~110 pods on an m5.large vs ~29.
