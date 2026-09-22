@@ -14,32 +14,20 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
 Subfolders are numbered by apply order (layer0 = dependency order; layer1/2 = priority).
 Each layer has its own `README.md` with the full folder list and **small/medium/large
-sizing guidance**. `ENV-MAP.md` is the consolidated per-env toggle reference.
+sizing guidance**.
 
-## Apply order
+## Deploy
 
-```
-# 1. Remote state (once)
-cd bootstrap/00-tf-backend && tofu init && tofu apply
+One self-contained script per size (state → tfvars → layer0 → kubeconfig/env →
+layer1 → layer2); infra env vars are derived from `tofu output`.
 
-# 2. Layer 0 — tofu, folders 00 → 10 in order (each has its own state;
-#    later folders read earlier ones via remote_state). Skip/enable paid
-#    folders per env — see layer0-provisioning/README.md + ENV-MAP.md.
-cd layer0-provisioning/00-network && tofu init && tofu apply    # ... through 10
-
-# 3. Wire kubeconfig + export layer0 outputs for Helmfile
-aws eks update-kubeconfig --name <cluster> --region ap-southeast-1
-cp env.sh.example env.sh && $EDITOR env.sh && source env.sh
-
-# 4. Layer 1 then Layer 2 — helmfile per folder, in number order.
-#    Which folders to apply per size: see each layer's README.md.
-cd layer1-addons/00-karpenter && helmfile apply                 # ... through 09
-cd layer2-platform/00-argocd  && helmfile apply                 # ... through 07
+```bash
+export ACME_EMAIL=you@example.com   # all sizes  (cert-manager)
+export DOMAIN_FILTER=example.com    # medium/large (external-dns)
+./scripts/deploy-small.sh           # or deploy-medium.sh / deploy-large.sh
 ```
 
-Per-layer folder lists, dependencies and **small/medium/large** guidance live in
-each layer's `README.md`; per-env `enable_*` toggles in `ENV-MAP.md`. Copy-paste
-deploy/teardown scripts (per size) in `DEPLOY.md`.
+Per-size folder lists + toggles: `DEPLOY.md` and the `layer*/README.md` sizing tables.
 
 ## North-South networking
 
@@ -80,6 +68,6 @@ are Helm-only. They complement each other — neither replaces the other.
 
 ## Teardown
 
-Reverse order: `layer1` (helmfile destroy) → `layer0` `04 → 00`.
-Watch for orphaned ALBs/ENIs from the LB Controller — delete Kubernetes
-Ingress/Service before destroying the VPC or it will block deletion.
+`./scripts/teardown.sh` — reverse order, guards skip whatever wasn't applied.
+It destroys the LB Controller (removing ALBs/ENIs) before the VPC, else the
+destroy hangs on orphaned network interfaces.
