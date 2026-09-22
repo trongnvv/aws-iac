@@ -1,0 +1,17 @@
+# OpenTofu / Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# Local handoff / secrets
+env.sh
+kubeconfig
+*.kubeconfig
+.env
+
+# Helm
+charts/
+*.tgz
