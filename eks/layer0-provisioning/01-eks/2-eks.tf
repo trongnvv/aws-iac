@@ -1,3 +1,10 @@
+locals {
+  vpc_cni_env = merge(
+    var.enable_prefix_delegation ? { ENABLE_PREFIX_DELEGATION = "true", WARM_PREFIX_TARGET = "1" } : {},
+    var.enable_pod_eni ? { ENABLE_POD_ENI = "true" } : {},
+  )
+}
+
 # Cluster + managed add-ons + bootstrap node group. Everything beyond the system
 # pool is provisioned just-in-time by Karpenter (layer1/00).
 # 💰 control plane ~$0.10/h + node group — destroy when done.
@@ -25,20 +32,21 @@ module "eks" {
   create_kms_key            = var.enable_secret_encryption
   cluster_encryption_config = var.enable_secret_encryption ? { resources = ["secrets"] } : {}
 
-  cluster_addons = {
-    coredns    = {}
-    kube-proxy = {}
-    vpc-cni = {
-      before_compute = true # create before nodes so the first pods get IPs
-      configuration_values = jsonencode({
-        env = var.enable_prefix_delegation ? {
-          ENABLE_PREFIX_DELEGATION = "true"
-          WARM_PREFIX_TARGET       = "1"
-        } : {}
-      })
-    }
-    eks-pod-identity-agent = {}
-  }
+  cluster_addons = merge(
+    {
+      coredns    = {}
+      kube-proxy = {}
+      vpc-cni = {
+        before_compute = true # create before nodes so the first pods get IPs
+        configuration_values = jsonencode({
+          enableNetworkPolicy = var.enable_network_policy ? "true" : "false"
+          env                 = local.vpc_cni_env
+        })
+      }
+      eks-pod-identity-agent = {}
+    },
+    var.enable_efs_csi ? { aws-efs-csi-driver = {} } : {},
+  )
 
   eks_managed_node_groups = {
     system = {
@@ -50,6 +58,11 @@ module "eks" {
       desired_size   = var.system_desired_size
       labels         = { role = "system" }
     }
+  }
+
+  # Tag the node SG so Karpenter's EC2NodeClass can discover it by tag.
+  node_security_group_tags = {
+    "karpenter.sh/discovery" = var.cluster_name
   }
 
   tags = {

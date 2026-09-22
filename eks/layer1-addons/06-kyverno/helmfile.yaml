@@ -1,0 +1,12 @@
+# Kyverno — policy engine (validate/mutate/generate admission policies).
+repositories:
+  - name: kyverno
+    url: https://kyverno.github.io/kyverno/
+
+releases:
+  - name: kyverno
+    namespace: kyverno
+    createNamespace: true
+    chart: kyverno/kyverno
+    version: "3.3.4"
+    wait: true

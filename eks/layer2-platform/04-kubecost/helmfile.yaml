@@ -1,0 +1,12 @@
+# Kubecost (OpenCost-based) — cost visibility per namespace/workload.
+repositories:
+  - name: kubecost
+    url: https://kubecost.github.io/cost-analyzer/
+
+releases:
+  - name: kubecost
+    namespace: kubecost
+    createNamespace: true
+    chart: kubecost/cost-analyzer
+    version: "2.5.3"
+    wait: true

@@ -1,0 +1,12 @@
+# Falco — runtime security (syscall-level threat detection on nodes).
+repositories:
+  - name: falcosecurity
+    url: https://falcosecurity.github.io/charts
+
+releases:
+  - name: falco
+    namespace: falco
+    createNamespace: true
+    chart: falcosecurity/falco
+    version: "4.20.0"
+    wait: true

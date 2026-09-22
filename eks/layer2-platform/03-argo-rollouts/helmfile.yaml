@@ -1,0 +1,12 @@
+# Argo Rollouts — progressive delivery (canary / blue-green).
+repositories:
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+releases:
+  - name: argo-rollouts
+    namespace: argo-rollouts
+    createNamespace: true
+    chart: argo/argo-rollouts
+    version: "2.38.0"
+    wait: true

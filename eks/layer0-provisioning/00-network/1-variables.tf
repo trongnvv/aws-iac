@@ -37,3 +37,16 @@ variable "app_subnet_cidrs" {
 variable "isolated_subnet_cidrs" {
   default = ["10.0.96.0/24", "10.0.97.0/24", "10.0.98.0/24"]
 }
+
+# Secondary CIDR for pod IPs (VPC CNI custom networking) — off by default.
+variable "enable_secondary_cidr" {
+  default = false
+}
+
+variable "secondary_cidr_block" {
+  default = "100.64.0.0/16"
+}
+
+variable "pod_subnet_cidrs" {
+  default = ["100.64.0.0/18", "100.64.64.0/18", "100.64.128.0/18"]
+}

@@ -1,0 +1,15 @@
+# Observability core: kube-prometheus-stack (Prometheus + Grafana + Alertmanager).
+# Loki (logs), Tempo (traces) and ADOT→AMP remote-write are follow-ups; if using
+# AMP (layer0/09), point Prometheus remoteWrite at $AMP_REMOTE_WRITE_URL instead
+# of keeping long-term storage local.
+repositories:
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+
+releases:
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    createNamespace: true
+    chart: prometheus-community/kube-prometheus-stack
+    version: "65.5.0"
+    wait: true

@@ -1,0 +1,11 @@
+# metrics-server — required by HPA and `kubectl top`. No AWS IAM needed.
+repositories:
+  - name: metrics-server
+    url: https://kubernetes-sigs.github.io/metrics-server/
+
+releases:
+  - name: metrics-server
+    namespace: kube-system
+    chart: metrics-server/metrics-server
+    version: "3.12.2"
+    wait: true

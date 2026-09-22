@@ -1,0 +1,24 @@
+# External Secrets Operator + a ClusterSecretStore for AWS Secrets Manager.
+# IAM via Pod Identity from layer0/04-addon-iam (SA external-secrets).
+repositories:
+  - name: external-secrets
+    url: https://charts.external-secrets.io
+
+releases:
+  - name: external-secrets
+    namespace: external-secrets
+    createNamespace: true
+    chart: external-secrets/external-secrets
+    version: "0.11.0"
+    wait: true
+    values:
+      - serviceAccount:
+          create: true
+          name: external-secrets
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: bash
+        args:
+          - -c
+          - sed "s|__REGION__|$AWS_REGION|g" secretstore.yaml | kubectl apply -f -

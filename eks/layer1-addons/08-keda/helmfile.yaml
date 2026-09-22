@@ -1,0 +1,16 @@
+# KEDA — event-driven autoscaling. IAM (CloudWatch/SQS scalers) via Pod Identity
+# from layer0/04-addon-iam (SA keda-operator).
+repositories:
+  - name: kedacore
+    url: https://kedacore.github.io/charts
+
+releases:
+  - name: keda
+    namespace: keda
+    createNamespace: true
+    chart: kedacore/keda
+    version: "2.16.0"
+    wait: true
+    values:
+      - serviceAccount:
+          name: keda-operator

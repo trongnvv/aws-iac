@@ -1,0 +1,23 @@
+# DNS at scale: autoscale CoreDNS with load + a per-node DNS cache.
+# NodeLocal DNSCache needs the cluster DNS service IP (DNS_CLUSTER_IP, usually
+# 10.100.0.10 on EKS) — verify with `kubectl -n kube-system get svc kube-dns`.
+repositories:
+  - name: cluster-proportional-autoscaler
+    url: https://kubernetes-sigs.github.io/cluster-proportional-autoscaler
+
+releases:
+  - name: coredns-autoscaler
+    namespace: kube-system
+    chart: cluster-proportional-autoscaler/cluster-proportional-autoscaler
+    version: "1.1.0"
+    wait: true
+    values:
+      - values/coredns-autoscaler.yaml
+
+  - name: node-local-dns
+    namespace: kube-system
+    chart: oci://ghcr.io/deliveryhero/helm-charts/node-local-dns
+    version: "2.9.2"
+    wait: true
+    values:
+      - values/node-local-dns.yaml.gotmpl

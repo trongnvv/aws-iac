@@ -51,6 +51,21 @@ variable "enable_prefix_delegation" {
   default = true
 }
 
+# Security groups per pod (ENABLE_POD_ENI) — e.g. only some pods may reach RDS.
+variable "enable_pod_eni" {
+  default = false
+}
+
+# VPC CNI network-policy enforcement (needed for layer1/07-network-policy).
+variable "enable_network_policy" {
+  default = false
+}
+
+# EFS CSI driver as a managed add-on (RWX volumes). Driver is free; EFS storage costs.
+variable "enable_efs_csi" {
+  default = false
+}
+
 # Bootstrap "system" node group — hosts core add-ons + Karpenter controller.
 # arm64 (Graviton) is cheap; arm64 nodes require arm64 images.
 variable "system_instance_types" {

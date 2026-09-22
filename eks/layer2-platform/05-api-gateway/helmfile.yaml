@@ -1,0 +1,13 @@
+# Kong — API gateway (auth, rate-limit, quota, key management) in front of services.
+# Alternative to AWS API Gateway; runs in-cluster, fronted by the ALB.
+repositories:
+  - name: kong
+    url: https://charts.konghq.com
+
+releases:
+  - name: kong
+    namespace: kong
+    createNamespace: true
+    chart: kong/kong
+    version: "2.46.0"
+    wait: true

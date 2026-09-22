@@ -1,0 +1,15 @@
+# Velero — cluster + volume backup to S3. Bucket + IAM come from layer0/10
+# (enable_backup=true). IAM via Pod Identity (SA velero) — no static keys.
+repositories:
+  - name: vmware-tanzu
+    url: https://vmware-tanzu.github.io/helm-charts
+
+releases:
+  - name: velero
+    namespace: velero
+    createNamespace: true
+    chart: vmware-tanzu/velero
+    version: "8.2.0"
+    wait: true
+    values:
+      - values/values.yaml.gotmpl
