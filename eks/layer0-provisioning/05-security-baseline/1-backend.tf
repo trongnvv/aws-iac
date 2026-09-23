@@ -1,8 +1,12 @@
 terraform {
   required_version = ">= 1.9.0"
 
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "s3" {
+    bucket         = "eks-iac-tfstate"
+    key            = "layer0/05-security-baseline/terraform.tfstate"
+    region         = "ap-southeast-1"
+    dynamodb_table = "eks-iac-tflock"
+    encrypt        = true
   }
 
   required_providers {

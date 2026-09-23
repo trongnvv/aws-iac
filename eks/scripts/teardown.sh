@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Reverse teardown. Guards skip folders/releases that were never applied.
-# Deletes Ingress/Service-created ALBs implicitly via helmfile destroy of the LB
-# controller; do it BEFORE destroying the VPC to avoid orphaned ENIs.
+# helmfile destroy of the LB controller removes ALBs/ENIs — do it BEFORE the VPC.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,8 +17,8 @@ for d in 09-dns-scale 08-keda 06-kyverno 05-external-secrets 04-cert-manager 03-
 done
 
 echo "== layer0 (reverse) =="
-for d in 10-network-firewall 09-waf 08-backup-aws 07-observability-aws 06-security-baseline \
-         05-ecr 04-addon-iam 03-karpenter-infra 02-node-group 01-eks 00-network; do
+for d in 08-waf 07-backup-aws 06-observability-aws 05-security-baseline 04-ecr \
+         03-addon-iam 02-karpenter-infra 01-eks 00-network; do
   (cd "layer0-provisioning/$d" && tofu destroy -auto-approve 2>/dev/null) || true
 done
 

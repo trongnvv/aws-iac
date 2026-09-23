@@ -7,19 +7,19 @@ REGION=ap-southeast-1
 : "${ACME_EMAIL:?export ACME_EMAIL=you@example.com before running}"
 
 echo "== remote state =="
-(cd bootstrap/00-tf-backend && tofu init -input=false && tofu apply -auto-approve)
+(cd bootstrap/00-tf-backend && tofu init && tofu apply -auto-approve)
 
 echo "== layer0 =="
-for d in 00-network 01-eks 02-node-group 03-karpenter-infra 04-addon-iam 05-ecr; do
-  (cd "layer0-provisioning/$d" && tofu init -input=false && tofu apply -auto-approve)
+for d in 00-network 01-eks 02-karpenter-infra 03-addon-iam 04-ecr; do
+  (cd "layer0-provisioning/$d" && tofu init && tofu apply -auto-approve)
 done
 
 echo "== wire cluster + env =="
 export AWS_REGION=$REGION
 export CLUSTER_NAME=$(cd layer0-provisioning/01-eks && tofu output -raw cluster_name)
 export VPC_ID=$(cd layer0-provisioning/00-network && tofu output -raw vpc_id)
-export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_queue_name)
-export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
+export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_queue_name)
+export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 
 echo "== layer1 =="

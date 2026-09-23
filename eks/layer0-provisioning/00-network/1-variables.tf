@@ -50,3 +50,17 @@ variable "secondary_cidr_block" {
 variable "pod_subnet_cidrs" {
   default = ["100.64.0.0/18", "100.64.64.0/18", "100.64.128.0/18"]
 }
+
+# Centralized egress inspection (AWS Network Firewall). Expensive (~$285/mo/endpoint)
+# → off by default. When on, app egress is redirected: app → firewall endpoint → NAT.
+variable "enable_network_firewall" {
+  default = false
+}
+
+variable "firewall_subnet_cidrs" {
+  default = ["10.0.99.0/28", "10.0.99.16/28", "10.0.99.32/28"]
+}
+
+variable "allowed_domains" {
+  default = [".amazonaws.com", ".pkg.dev"]
+}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Large (prod/regulated): full security baseline, private endpoint, pod-ENI,
-# per-AZ NAT, AMP, WAF, egress firewall, delivery, cost, API gateway, mesh, Falco.
-# Requires: ACME_EMAIL, DOMAIN_FILTER.
+# per-AZ NAT, secondary CIDR, AMP, WAF, egress firewall, delivery, cost, API
+# gateway, mesh, Falco.
+# Requires: ACME_EMAIL, DOMAIN_FILTER. Run from inside the VPC (private endpoint).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REGION=ap-southeast-1
@@ -9,12 +10,13 @@ REGION=ap-southeast-1
 : "${DOMAIN_FILTER:?export DOMAIN_FILTER=example.com before running}"
 
 echo "== remote state =="
-(cd bootstrap/00-tf-backend && tofu init -input=false && tofu apply -auto-approve)
+(cd bootstrap/00-tf-backend && tofu init && tofu apply -auto-approve)
 
 echo "== tfvars (large) =="
 cat > layer0-provisioning/00-network/terraform.tfvars <<'EOF'
-nat_per_az            = true
-enable_secondary_cidr = true
+nat_per_az              = true
+enable_secondary_cidr   = true
+enable_network_firewall = true
 EOF
 cat > layer0-provisioning/01-eks/terraform.tfvars <<'EOF'
 enable_control_plane_logging   = true
@@ -24,32 +26,30 @@ enable_pod_eni                 = true
 enable_network_policy          = true
 enable_efs_csi                 = true
 EOF
-cat > layer0-provisioning/06-security-baseline/terraform.tfvars <<'EOF'
+cat > layer0-provisioning/05-security-baseline/terraform.tfvars <<'EOF'
 enable_guardduty   = true
 enable_cloudtrail  = true
 enable_config      = true
 enable_securityhub = true
 EOF
-echo 'enable_enhanced_scan    = true' > layer0-provisioning/05-ecr/terraform.tfvars
-echo 'enable_amp              = true' > layer0-provisioning/07-observability-aws/terraform.tfvars
-echo 'enable_backup           = true' > layer0-provisioning/08-backup-aws/terraform.tfvars
-echo 'enable_waf              = true' > layer0-provisioning/09-waf/terraform.tfvars
-echo 'enable_network_firewall = true' > layer0-provisioning/10-network-firewall/terraform.tfvars
+echo 'enable_enhanced_scan = true' > layer0-provisioning/04-ecr/terraform.tfvars
+echo 'enable_amp           = true' > layer0-provisioning/06-observability-aws/terraform.tfvars
+echo 'enable_backup        = true' > layer0-provisioning/07-backup-aws/terraform.tfvars
+echo 'enable_waf           = true' > layer0-provisioning/08-waf/terraform.tfvars
 
 echo "== layer0 =="
-for d in 00-network 01-eks 02-node-group 03-karpenter-infra 04-addon-iam 05-ecr \
-         06-security-baseline 07-observability-aws 08-backup-aws 09-waf 10-network-firewall; do
-  (cd "layer0-provisioning/$d" && tofu init -input=false && tofu apply -auto-approve)
+for d in 00-network 01-eks 02-karpenter-infra 03-addon-iam 04-ecr \
+         05-security-baseline 06-observability-aws 07-backup-aws 08-waf; do
+  (cd "layer0-provisioning/$d" && tofu init && tofu apply -auto-approve)
 done
-echo "!! wire app route tables through the firewall endpoints (env-specific) — see 10-network-firewall"
 
 echo "== wire cluster + env =="
 export AWS_REGION=$REGION
 export CLUSTER_NAME=$(cd layer0-provisioning/01-eks && tofu output -raw cluster_name)
 export VPC_ID=$(cd layer0-provisioning/00-network && tofu output -raw vpc_id)
-export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_queue_name)
-export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
-export BACKUP_BUCKET=$(cd layer0-provisioning/08-backup-aws && tofu output -raw velero_bucket)
+export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_queue_name)
+export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
+export BACKUP_BUCKET=$(cd layer0-provisioning/07-backup-aws && tofu output -raw velero_bucket)
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 export DNS_CLUSTER_IP=$(kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}')
 

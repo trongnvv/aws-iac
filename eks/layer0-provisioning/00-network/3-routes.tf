@@ -13,15 +13,20 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# One app route table per AZ so each AZ can route to its own NAT when nat_per_az=true.
+# One app route table per AZ. Default route is a separate aws_route so it can be
+# swapped: → NAT normally, or → the firewall endpoint when egress inspection is on
+# (see 7-network-firewall.tf for the firewall-path route).
 resource "aws_route_table" "app" {
   count  = length(var.azs)
   vpc_id = aws_vpc.main.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat[var.nat_per_az ? count.index : 0].id
-  }
-  tags = { Name = "app-rt-${var.azs[count.index]}" }
+  tags   = { Name = "app-rt-${var.azs[count.index]}" }
+}
+
+resource "aws_route" "app_nat" {
+  count                  = var.enable_network_firewall ? 0 : length(var.azs)
+  route_table_id         = aws_route_table.app[count.index].id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat[var.nat_per_az ? count.index : 0].id
 }
 
 resource "aws_route_table_association" "app" {

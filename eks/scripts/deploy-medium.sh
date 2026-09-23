@@ -9,7 +9,7 @@ REGION=ap-southeast-1
 : "${DOMAIN_FILTER:?export DOMAIN_FILTER=example.com before running}"
 
 echo "== remote state =="
-(cd bootstrap/00-tf-backend && tofu init -input=false && tofu apply -auto-approve)
+(cd bootstrap/00-tf-backend && tofu init && tofu apply -auto-approve)
 
 echo "== tfvars (medium) =="
 cat > layer0-provisioning/01-eks/terraform.tfvars <<'EOF'
@@ -17,23 +17,23 @@ enable_control_plane_logging = true
 enable_secret_encryption     = true
 enable_network_policy        = true
 EOF
-echo 'enable_guardduty = true' > layer0-provisioning/06-security-baseline/terraform.tfvars
-echo 'enable_backup    = true' > layer0-provisioning/08-backup-aws/terraform.tfvars
-echo 'enable_waf       = true' > layer0-provisioning/09-waf/terraform.tfvars
+echo 'enable_guardduty = true' > layer0-provisioning/05-security-baseline/terraform.tfvars
+echo 'enable_backup    = true' > layer0-provisioning/07-backup-aws/terraform.tfvars
+echo 'enable_waf       = true' > layer0-provisioning/08-waf/terraform.tfvars
 
 echo "== layer0 =="
-for d in 00-network 01-eks 02-node-group 03-karpenter-infra 04-addon-iam \
-         05-ecr 06-security-baseline 08-backup-aws 09-waf; do
-  (cd "layer0-provisioning/$d" && tofu init -input=false && tofu apply -auto-approve)
+for d in 00-network 01-eks 02-karpenter-infra 03-addon-iam 04-ecr \
+         05-security-baseline 07-backup-aws 08-waf; do
+  (cd "layer0-provisioning/$d" && tofu init && tofu apply -auto-approve)
 done
 
 echo "== wire cluster + env =="
 export AWS_REGION=$REGION
 export CLUSTER_NAME=$(cd layer0-provisioning/01-eks && tofu output -raw cluster_name)
 export VPC_ID=$(cd layer0-provisioning/00-network && tofu output -raw vpc_id)
-export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_queue_name)
-export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/03-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
-export BACKUP_BUCKET=$(cd layer0-provisioning/08-backup-aws && tofu output -raw velero_bucket)
+export KARPENTER_QUEUE_NAME=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_queue_name)
+export KARPENTER_NODE_ROLE=$(cd layer0-provisioning/02-karpenter-infra && tofu output -raw karpenter_node_iam_role_name)
+export BACKUP_BUCKET=$(cd layer0-provisioning/07-backup-aws && tofu output -raw velero_bucket)
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 
 echo "== layer1 =="

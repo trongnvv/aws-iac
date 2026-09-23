@@ -24,8 +24,8 @@ What each size builds (folders + toggles) is in the `layer*/README.md` sizing ta
 - **`deploy-large.sh` sets a private API endpoint** — run it from inside the VPC
   (bastion/VPN/SSM), otherwise the post-cluster `kubectl`/`helmfile` steps can't
   reach the API server.
-- After large's layer0, wire the app route tables through the Network Firewall
-  endpoints — env-specific, see `layer0-provisioning/10-network-firewall`.
+- Egress network firewall (large) lives in `00-network` (`enable_network_firewall`):
+  dedicated firewall subnets + app-egress redirect are wired automatically.
 - Generated `terraform.tfvars` are local and gitignored.
 
 ## Teardown

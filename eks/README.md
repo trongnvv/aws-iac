@@ -3,6 +3,18 @@
 A hands-on, production-shaped EKS build split into layers. `ap-southeast-1`,
 OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
+## Start here
+
+| I want to… | Read |
+|---|---|
+| **Deploy it, step by step** | **`DEPLOY.md`** → runs `scripts/deploy-{small,medium,large}.sh` |
+| Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
+| Set env vars for a manual run | `env.sh.example` |
+| See known gaps / hardening backlog | `REVIEW.md` *(not needed to deploy)* |
+| Get the big picture | keep reading this file |
+
+New here? Read this file top-to-bottom once, then follow `DEPLOY.md`.
+
 ## Layers
 
 | Layer | Tool | What |
@@ -38,7 +50,7 @@ Traffic in and out of the cluster, split across layers.
 Internet → [CloudFront → WAF/Shield] → [ALB/NLB (LBC)] → [API GW (Kong)] → Service
 ```
 - ALB/NLB + DNS + TLS: `layer1/02-lb-controller` · `03-external-dns` · `04-cert-manager`
-- WAF: `layer0/09-waf` (attach via the Ingress annotation `alb.ingress.kubernetes.io/wafv2-acl-arn`)
+- WAF: `layer0/08-waf` (attach via the Ingress annotation `alb.ingress.kubernetes.io/wafv2-acl-arn`)
 - API management: `layer2/05-api-gateway` (Kong)
 
 **Outbound egress**
@@ -47,7 +59,7 @@ Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (stat
 ```
 - Static egress IP for partner/exchange source-IP allowlisting: `layer0/00-network` output `nat_public_ips`
 - Egress filtering: `layer1/07-network-policy`
-- Centralized inspection: `layer0/10-network-firewall` (or Istio egress in `layer2/06-service-mesh`)
+- Centralized inspection: `layer0/00-network` (`enable_network_firewall` — dedicated firewall subnets + app-egress redirect) or Istio egress in `layer2/06-service-mesh`
 
 ## Conventions
 
