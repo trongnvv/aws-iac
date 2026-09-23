@@ -3,18 +3,22 @@
 Each size builds on the previous. `foundation` (S3 state + Route 53/ACM) is shared
 by all. Diagrams are Mermaid — GitHub renders them inline.
 
-**Colour legend:** 🟣 foundation · 🟩 EKS control plane (AWS-managed) · 🟠 edge/ingress · 🟢 worker nodes · 🟦 add-ons · 🔵 network (NAT/firewall/IGW) · 🟡 AWS managed services · ⚪ external.
+**Colour legend:** 🟣 foundation · 🟩 EKS control plane (AWS-managed) · 🟠 public subnets/edge · 🟢 private-app subnets · ⬜ private-isolated subnets · 🔵 network (NAT/firewall/IGW) · 🟦 add-ons · 🟡 AWS managed services · ⚪ external.
 
 Accuracy notes (apply to every size):
+- **Subnet tiers** (per AZ, built by `00-network`): **public** (tag `role/elb` — ALB, NAT),
+  **private-app** (tags `internal-elb` + `karpenter.sh/discovery` — nodes/pods, plus
+  the secondary-CIDR pod subnets), **private-isolated** (**no internet route** —
+  reserved for RDS/ElastiCache, deployed by a separate stack). Large adds dedicated
+  **firewall subnets**.
 - The **EKS control plane is AWS-managed and runs outside your VPC**. Only the
-  cross-account **EKS ENIs** and the **API endpoint** (public or private) touch
-  your subnets — not the control-plane compute.
+  cross-account **EKS ENIs** and the **API endpoint** (public or private) touch your
+  subnets — not the control-plane compute.
 - **WAF** is a web ACL *attached* to the ALB (regional scope), not an inline hop.
 - Image pulls (ECR) and secret reads (Secrets Manager) go through **VPC interface
   endpoints** — private, skipping the NAT.
-- **CloudFront + Shield Advanced are not provisioned by this IaC** — add them at
-  the edge if you need a CDN / DDoS tier.
-- `layer1`/`layer2` boxes are Helm releases running as pods on the worker nodes.
+- **CloudFront + Shield Advanced are not provisioned by this IaC** — add them at the
+  edge if you need a CDN / DDoS tier.
 
 ---
 
@@ -31,18 +35,20 @@ flowchart TB
     cpane["<b>EKS control plane</b><br/>AWS-managed · outside your VPC<br/>public API endpoint"]:::mgmt
     subgraph vpc["VPC · 3 AZ"]
       direction TB
-      subgraph ingress["public subnets"]
+      igw["IGW"]:::net
+      subgraph pub["public subnets · tag role/elb"]
+        direction LR
         alb["ALB"]:::edge
+        nat["NAT ×1"]:::net
       end
-      subgraph eks["EKS worker nodes · app subnets"]
+      subgraph app["private-app subnets · internal-elb + karpenter tags"]
         direction LR
         nodes["nodes / pods"]:::eks
         l1["<b>layer1</b><br/>karpenter · metrics-server · LBC<br/>cert-manager · external-secrets"]:::add
         l2["<b>layer2</b><br/>argocd · kube-prometheus"]:::add
       end
-      subgraph egr["egress"]
-        direction LR
-        nat["NAT ×1"]:::net --> igw["IGW"]:::net
+      subgraph iso["private-isolated subnets · NO internet route"]
+        isod["reserved: RDS · ElastiCache<br/>(separate stack)"]:::iso
       end
     end
     svc["<b>AWS managed services</b><br/>ECR · Secrets Manager"]:::svc
@@ -50,8 +56,7 @@ flowchart TB
   internet --> alb --> nodes
   found -. DNS / TLS .-> alb
   cpane -. cross-account ENIs · API .- nodes
-  nodes --> nat
-  igw --> internet
+  nodes --> nat --> igw --> internet
   nodes -. images · secrets .-> svc
 
   classDef ext fill:#eceff1,stroke:#546e7a,color:#000
@@ -62,10 +67,11 @@ flowchart TB
   classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
   classDef add fill:#e0f7fa,stroke:#00838f,color:#000
   classDef svc fill:#fffde7,stroke:#f9a825,color:#000
+  classDef iso fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray:4 3,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style ingress fill:#fff8ef,stroke:#fb8c00
-  style egr fill:#eaf1fb,stroke:#3949ab
-  style eks fill:#eaf6ea,stroke:#2e7d32
+  style pub fill:#fff8ef,stroke:#fb8c00
+  style app fill:#eaf6ea,stroke:#2e7d32
+  style iso fill:#fafafa,stroke:#9e9e9e
 ```
 
 ---
@@ -73,7 +79,7 @@ flowchart TB
 ## Medium (staging)
 
 Small **plus**: WAF on the ALB, control-plane logging, secret encryption, network
-policy, GuardDuty, backup, image scanning, and DNS/policy/event-scaling add-ons.
+policy, GuardDuty, backup, image scanning, DNS/policy/event-scaling add-ons.
 
 ```mermaid
 flowchart TB
@@ -84,20 +90,21 @@ flowchart TB
     cpane["<b>EKS control plane</b><br/>AWS-managed · outside your VPC<br/>public API · restricted CIDRs"]:::mgmt
     subgraph vpc["VPC · 3 AZ"]
       direction TB
-      subgraph ingress["public subnets · ingress"]
+      igw["IGW"]:::net
+      subgraph pub["public subnets · tag role/elb"]
         direction LR
         alb["ALB"]:::edge
         waf["WAF web ACL"]:::edge
+        nat["NAT ×1"]:::net
       end
-      subgraph eks["EKS worker nodes · app subnets"]
+      subgraph app["private-app subnets · internal-elb + karpenter tags"]
         direction LR
         nodes["nodes / pods"]:::eks
         l1["<b>layer1</b><br/>karpenter · metrics-server · LBC · external-dns<br/>cert-manager · external-secrets · kyverno · keda · netpol"]:::add
         l2["<b>layer2</b><br/>argocd · kube-prometheus · velero"]:::add
       end
-      subgraph egr["egress"]
-        direction LR
-        nat["NAT ×1"]:::net --> igw["IGW"]:::net
+      subgraph iso["private-isolated subnets · NO internet route"]
+        isod["reserved: RDS · ElastiCache<br/>(separate stack)"]:::iso
       end
     end
     svc["<b>AWS managed services</b><br/>CloudWatch · KMS · GuardDuty<br/>Secrets Manager · S3 backup · ECR"]:::svc
@@ -106,8 +113,7 @@ flowchart TB
   waf -. attached .- alb
   found -. DNS / TLS .-> alb
   cpane -. cross-account ENIs · API .- nodes
-  nodes --> nat
-  igw --> internet
+  nodes --> nat --> igw --> internet
   nodes -. logs·secrets·backup·images·threat .-> svc
 
   classDef ext fill:#eceff1,stroke:#546e7a,color:#000
@@ -118,10 +124,11 @@ flowchart TB
   classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
   classDef add fill:#e0f7fa,stroke:#00838f,color:#000
   classDef svc fill:#fffde7,stroke:#f9a825,color:#000
+  classDef iso fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray:4 3,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style ingress fill:#fff8ef,stroke:#fb8c00
-  style egr fill:#eaf1fb,stroke:#3949ab
-  style eks fill:#eaf6ea,stroke:#2e7d32
+  style pub fill:#fff8ef,stroke:#fb8c00
+  style app fill:#eaf6ea,stroke:#2e7d32
+  style iso fill:#fafafa,stroke:#9e9e9e
 ```
 
 ---
@@ -142,20 +149,24 @@ flowchart TB
     cpane["<b>EKS control plane</b><br/>AWS-managed · outside your VPC<br/>PRIVATE API endpoint"]:::mgmt
     subgraph vpc["VPC · 3 AZ · primary + secondary CIDR"]
       direction TB
-      subgraph ingress["public subnets · ingress"]
+      igw["IGW"]:::net
+      subgraph pub["public subnets · tag role/elb"]
         direction LR
         alb["ALB"]:::edge
         waf["WAF web ACL"]:::edge
+        nat["NAT ×3 · static EIP"]:::net
       end
-      subgraph eks["EKS worker nodes · app + pod subnets"]
+      subgraph fw["firewall subnets"]
+        nfw["Network Firewall"]:::net
+      end
+      subgraph app["private-app + pod subnets · internal-elb + karpenter tags"]
         direction LR
         nodes["nodes / pods"]:::eks
         l1["<b>layer1</b><br/>karpenter · LBC · external-dns · cert-manager<br/>external-secrets · kyverno · keda · dns-scale · netpol · metrics-server"]:::add
         l2["<b>layer2</b><br/>argocd · kube-prometheus · velero<br/>argo-rollouts · kubecost · Kong · Istio mTLS · Falco"]:::add
       end
-      subgraph egr["egress · firewall subnets"]
-        direction LR
-        nfw["Network Firewall"]:::net --> nat["NAT ×3 · static EIP"]:::net --> igw["IGW"]:::net
+      subgraph iso["private-isolated subnets · NO internet route"]
+        isod["reserved: RDS · ElastiCache<br/>(separate stack)"]:::iso
       end
     end
     svc["<b>AWS managed services</b><br/>CloudWatch · KMS · Managed Prometheus · EFS<br/>S3 backup · ECR + Inspector<br/>GuardDuty · CloudTrail · Config · Security Hub"]:::svc
@@ -164,8 +175,7 @@ flowchart TB
   waf -. attached .- alb
   found -. DNS / TLS .-> alb
   cpane -. cross-account ENIs · API .- nodes
-  nodes -->|egress| nfw
-  igw --> internet
+  nodes -->|egress| nfw --> nat --> igw --> internet
   nat --> partner
   nodes -. logs·metrics·secrets·backup·images·audit .-> svc
 
@@ -177,10 +187,12 @@ flowchart TB
   classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
   classDef add fill:#e0f7fa,stroke:#00838f,color:#000
   classDef svc fill:#fffde7,stroke:#f9a825,color:#000
+  classDef iso fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray:4 3,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style ingress fill:#fff8ef,stroke:#fb8c00
-  style egr fill:#eaf1fb,stroke:#3949ab
-  style eks fill:#eaf6ea,stroke:#2e7d32
+  style pub fill:#fff8ef,stroke:#fb8c00
+  style fw fill:#eaf1fb,stroke:#3949ab
+  style app fill:#eaf6ea,stroke:#2e7d32
+  style iso fill:#fafafa,stroke:#9e9e9e
 ```
 
 > Egress path (large): pod → Network Firewall (domain allowlist) → NAT (static EIP)
