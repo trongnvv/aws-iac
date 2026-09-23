@@ -8,7 +8,8 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | I want to… | Read |
 |---|---|
 | **First time — set up shared prereqs** | `../foundation/README.md` — S3 state backend + Route 53 zone (run once) |
-| **Deploy it, step by step** | **`docs/DEPLOY.md`** → runs `scripts/deploy-{small,medium,large}.sh` |
+| **Deploy it** | **`docs/DEPLOY.md`** → `scripts/deploy.sh <env>` (dev/prod) |
+| Do it by hand, small steps (learn/debug) | `docs/WALKTHROUGH-dev.md` |
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
 | Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
