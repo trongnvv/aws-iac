@@ -8,13 +8,14 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | I want to… | Read |
 |---|---|
 | **First time — set up shared prereqs** | `../foundation/README.md` — S3 state backend + Route 53 zone (run once) |
-| **Deploy it, step by step** | **`DEPLOY.md`** → runs `scripts/deploy-{small,medium,large}.sh` |
+| **Deploy it, step by step** | **`docs/DEPLOY.md`** → runs `scripts/deploy-{small,medium,large}.sh` |
+| See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
 | Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
-| See known gaps / hardening backlog | `REVIEW.md` *(not needed to deploy)* |
+| See known gaps / hardening backlog | `docs/REVIEW.md` *(not needed to deploy)* |
 | Get the big picture | keep reading this file |
 
-New here? Read this file top-to-bottom once, then follow `DEPLOY.md`.
+New here? Read this file top-to-bottom once, then follow `docs/DEPLOY.md`.
 
 ## Layers
 
@@ -42,7 +43,7 @@ export DOMAIN_FILTER=example.com    # medium/large (external-dns)
 ./scripts/deploy-small.sh           # or deploy-medium.sh / deploy-large.sh
 ```
 
-Per-size folder lists + toggles: `DEPLOY.md` and the `layer*/README.md` sizing tables.
+Per-size folder lists + toggles: `docs/DEPLOY.md` and the `layer*/README.md` sizing tables.
 
 ## North-South networking
 
