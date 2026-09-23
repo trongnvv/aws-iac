@@ -6,8 +6,7 @@ cd "$(dirname "$0")/.."
 REGION=ap-southeast-1
 : "${ACME_EMAIL:?export ACME_EMAIL=you@example.com before running}"
 
-echo "== remote state =="
-(cd bootstrap/00-tf-backend && tofu init && tofu apply -auto-approve)
+# Prereq: run ../foundation/apply.sh once (S3 state backend + DNS zone) first.
 
 echo "== layer0 =="
 for d in 00-network 01-eks 02-karpenter-infra 03-addon-iam 04-ecr; do

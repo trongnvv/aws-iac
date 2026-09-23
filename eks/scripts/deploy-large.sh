@@ -9,8 +9,7 @@ REGION=ap-southeast-1
 : "${ACME_EMAIL:?export ACME_EMAIL=you@example.com before running}"
 : "${DOMAIN_FILTER:?export DOMAIN_FILTER=example.com before running}"
 
-echo "== remote state =="
-(cd bootstrap/00-tf-backend && tofu init && tofu apply -auto-approve)
+# Prereq: run ../foundation/apply.sh once (S3 state backend + DNS zone) first.
 
 echo "== tfvars (large) =="
 cat > layer0-provisioning/00-network/terraform.tfvars <<'EOF'

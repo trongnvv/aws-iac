@@ -7,6 +7,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
 | I want to… | Read |
 |---|---|
+| **First time — set up shared prereqs** | `../foundation/README.md` — S3 state backend + Route 53 zone (run once) |
 | **Deploy it, step by step** | **`DEPLOY.md`** → runs `scripts/deploy-{small,medium,large}.sh` |
 | Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
@@ -19,8 +20,8 @@ New here? Read this file top-to-bottom once, then follow `DEPLOY.md`.
 
 | Layer | Tool | What |
 |---|---|---|
-| `bootstrap/` | OpenTofu | remote-state backend (S3 + DynamoDB lock) |
-| `layer0-provisioning/` | OpenTofu | AWS resources: network, EKS, node group, Karpenter infra, add-on IAM, ECR, security, observability, backup, WAF, network firewall |
+| `../foundation/` | OpenTofu | shared prerequisites (run once): S3 state backend + Route 53 zone + ACM cert |
+| `layer0-provisioning/` | OpenTofu | AWS resources: network (+egress firewall), EKS, Karpenter infra, add-on IAM, ECR, security, observability, backup, WAF |
 | `layer1-addons/` | Helmfile | core cluster add-ons (autoscaling, ingress, DNS, certs, secrets, policy) |
 | `layer2-platform/` | Helmfile | platform & apps (GitOps, observability, backup, delivery, mesh, security) |
 
@@ -30,8 +31,10 @@ sizing guidance**.
 
 ## Deploy
 
-One self-contained script per size (state → tfvars → layer0 → kubeconfig/env →
-layer1 → layer2); infra env vars are derived from `tofu output`.
+One self-contained script per size (tfvars → layer0 → kubeconfig/env → layer1 →
+layer2); infra env vars are derived from `tofu output`.
+
+Prereq (once): `(cd ../foundation && ./apply.sh)` — S3 state backend + DNS zone.
 
 ```bash
 export ACME_EMAIL=you@example.com   # all sizes  (cert-manager)
@@ -70,9 +73,30 @@ Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (stat
 
 ## Managed add-ons vs Helm (who installs what)
 
-| EKS managed add-on (layer0/01-eks, AWS lifecycle) | Must install via Helm (layer1/2) |
-|---|---|
-| vpc-cni · coredns · kube-proxy · ebs-csi · efs-csi · pod-identity-agent · adot · cloudwatch-observability | Karpenter · AWS LB Controller · external-dns · cert-manager · external-secrets · metrics-server · Kyverno · KEDA · ArgoCD · Istio · Velero · Kubecost · Falco |
+**EKS managed add-ons** — in `layer0/01-eks`, AWS-managed lifecycle:
+- vpc-cni
+- coredns
+- kube-proxy
+- ebs-csi
+- efs-csi
+- pod-identity-agent
+- adot
+- cloudwatch-observability
+
+**Installed via Helm** — layer1 / layer2:
+- Karpenter
+- AWS Load Balancer Controller
+- external-dns
+- cert-manager
+- external-secrets
+- metrics-server
+- Kyverno
+- KEDA
+- ArgoCD
+- Istio
+- Velero
+- Kubecost
+- Falco
 
 Managed add-ons are plumbing AWS lifecycle-manages; the controllers that make the
 cluster actually usable (autoscaling, ingress, DNS, certs, secrets, policy, GitOps)
