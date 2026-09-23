@@ -5,7 +5,9 @@
 lists, so a second system never collides with the first.
 
 ## Prerequisites
-- `tofu`, `helmfile`, `aws`, `kubectl` installed; `aws sts get-caller-identity` works.
+- `tofu`, `helmfile`, `aws`, `kubectl` installed.
+- **AWS credentials** for the `default` profile — see `AWS-CREDENTIALS.md`; verify with
+  `aws sts get-caller-identity`.
 - Foundation set up **once** (S3 state backend + Route 53 zone): `(cd ../foundation && ./apply.sh)`.
 
 ## Run

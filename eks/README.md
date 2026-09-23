@@ -7,6 +7,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
 | I want to… | Read |
 |---|---|
+| **No AWS credentials yet** | `docs/AWS-CREDENTIALS.md` — get keys / SSO for the `default` profile |
 | **First time — set up shared prereqs** | `../foundation/README.md` — S3 state backend + Route 53 zone (run once) |
 | **Deploy it** | **`docs/DEPLOY.md`** → `scripts/deploy.sh <env>` (dev/prod) |
 | Do it by hand, small steps (learn/debug) | `docs/WALKTHROUGH-dev.md` |
