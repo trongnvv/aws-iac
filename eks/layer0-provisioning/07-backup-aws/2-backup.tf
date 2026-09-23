@@ -2,7 +2,7 @@
 # to write backups and snapshot EBS volumes. All gated by enable_backup.
 resource "aws_s3_bucket" "velero" {
   count  = var.enable_backup ? 1 : 0
-  bucket = var.backup_bucket_name
+  bucket = "${var.env}-${var.backup_bucket_name}"
 }
 
 resource "aws_s3_bucket_public_access_block" "velero" {

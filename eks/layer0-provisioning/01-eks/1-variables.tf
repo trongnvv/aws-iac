@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 variable "cluster_name" {
   default = "eks-dev"
 }

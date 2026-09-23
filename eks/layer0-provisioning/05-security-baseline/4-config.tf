@@ -1,7 +1,7 @@
 # AWS Config — records resource state + evaluates compliance rules to S3.
 resource "aws_s3_bucket" "config" {
   count         = var.enable_config ? 1 : 0
-  bucket        = var.config_bucket_name
+  bucket        = "${var.env}-${var.config_bucket_name}"
   force_destroy = true
 }
 

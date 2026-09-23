@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 # AMP bills per sample ingested + stored → default off; enable per-env.
 variable "enable_amp" {
   default = false

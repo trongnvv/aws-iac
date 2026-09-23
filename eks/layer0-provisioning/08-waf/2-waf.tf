@@ -2,7 +2,7 @@
 # alb.ingress.kubernetes.io/wafv2-acl-arn = <web_acl_arn> (LBC does the association).
 resource "aws_wafv2_web_acl" "this" {
   count = var.enable_waf ? 1 : 0
-  name  = var.web_acl_name
+  name  = "${var.env}-${var.web_acl_name}"
   scope = "REGIONAL"
 
   default_action {

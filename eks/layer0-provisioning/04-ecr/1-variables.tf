@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 variable "repo_names" {
   default = ["app"]
 }

@@ -1,50 +1,53 @@
 # Deploy
 
-One self-contained script per size in `scripts/`. Each runs the full pipeline —
-per-size `terraform.tfvars` → layer0 → kubeconfig/env → layer1 → layer2. Infra env
-vars (cluster name, VPC id, Karpenter queue/role, backup bucket, DNS IP) are derived
-from `tofu output`; you only export the app-specific ones.
+**Multi-env — one codebase, many systems.** Each environment lives under
+`envs/<env>/` with its own state (S3 key prefixed by `<env>`), toggles, and add-on
+lists, so a second system never collides with the first.
 
 ## Prerequisites
-- `tofu`, `helmfile`, `aws`, `kubectl` installed and `aws sts get-caller-identity` works.
-- **Foundation set up once** (S3 state backend + Route 53 zone): `(cd ../foundation && ./apply.sh)`.
+- `tofu`, `helmfile`, `aws`, `kubectl` installed; `aws sts get-caller-identity` works.
+- Foundation set up **once** (S3 state backend + Route 53 zone): `(cd ../foundation && ./apply.sh)`.
 
 ## Run
 ```bash
-export ACME_EMAIL=you@example.com    # all sizes  (cert-manager)
-export DOMAIN_FILTER=example.com     # medium/large (external-dns)
-
-./scripts/deploy-small.sh     # dev/lab      — cluster + core add-ons, nothing paid
-./scripts/deploy-medium.sh    # staging      — + logging, encryption, backup, GuardDuty, WAF
-./scripts/deploy-large.sh     # prod/regulated — full security, private endpoint, mesh, edge/egress
+./scripts/deploy.sh dev     # dev  = small preset (nothing paid)
+./scripts/deploy.sh prod    # prod = large preset (full security, private API, egress firewall)
 ```
+Each run applies layer0 (`00→08`) into `<env>`-prefixed state, wires the kubeconfig,
+then applies the env's layer1/layer2 add-on lists. Infra vars come from `tofu output`.
 
-What each size builds (folders + toggles) is in the `layer*/README.md` sizing tables.
+## envs/&lt;env&gt;/
+| File | What |
+|---|---|
+| `backend.hcl` | S3 bucket + lock table + region. State bucket is shared; the **key** is `<env>/layer0/<folder>/...` |
+| `config.env` | `TF_VAR_env`, `TF_VAR_cluster_name`, the `enable_*` toggles, `ACME_EMAIL`/`DOMAIN_FILTER`, and the `L1`/`L2` add-on lists + `NETPOL` |
+
+**Add a new system:** `cp -r envs/dev envs/staging`, edit `envs/staging/config.env`
+(env name, cluster_name, toggles, add-on lists), then `./scripts/deploy.sh staging`.
+It gets isolated state and `<env>`-prefixed resource names automatically.
+
+## Cost per preset
+`ap-southeast-1`, 24/7 monthly. Billing is hourly — a short run + `teardown.sh` costs a few dollars.
+
+| Preset (env) | ~Monthly | Main drivers |
+|---|---|---|
+| dev (small) | **~$180** | control plane $73 · 1 NAT · 2× t4g.medium · endpoints |
+| medium* | **~$250–320** | + GuardDuty · WAF · CloudWatch logs · backup |
+| prod (large) | **~$1,200–1,600** | + 3× NAT · full CloudTrail/Config/Security Hub · AMP · **Network Firewall ~$865** |
+
+\*medium = a preset you can add (`cp -r envs/dev envs/staging`, then turn on
+logging/encryption/backup/GuardDuty/WAF). Biggest levers:
+`enable_network_firewall=false` (−~$865/mo), `nat_per_az=false` (−~$66/mo).
 
 ## Notes
-- **`deploy-large.sh` sets a private API endpoint** — run it from inside the VPC
-  (bastion/VPN/SSM), otherwise the post-cluster `kubectl`/`helmfile` steps can't
-  reach the API server.
-- Egress network firewall (large) lives in `00-network` (`enable_network_firewall`):
-  dedicated firewall subnets + app-egress redirect are wired automatically.
-- Generated `terraform.tfvars` are local and gitignored.
-
-## Cost per size
-
-Rough `ap-southeast-1` estimates, **24/7 monthly**. Billing is hourly — a few-hours
-lab run then `teardown.sh` costs only a few dollars, not these figures.
-
-| Size | ~Monthly (24/7) | Main drivers |
-|---|---|---|
-| Small | **~$180** | EKS control plane $73 · 1 NAT ~$33 · 2× t4g.medium ~$49 · interface endpoints ~$22 |
-| Medium | **~$250–320** | Small + GuardDuty + WAF + CloudWatch log ingest + backup S3 |
-| Large | **~$1,200–1,600** | Medium + 3× NAT (per-AZ) + full CloudTrail/Config/Security Hub + AMP + **Network Firewall ~$865 (3 endpoints)** |
-
-Biggest levers: **Network Firewall** (`enable_network_firewall=false` drops Large by
-~$865/mo) and **per-AZ NAT** (`nat_per_az=false` saves ~$66/mo). Control plane ($73)
-is fixed while the cluster exists.
+- **prod sets a private API endpoint** — run `deploy.sh prod` from inside the VPC
+  (bastion/VPN/SSM), else the post-cluster kubectl/helmfile steps can't reach the API.
+- Global-unique names (state keys, S3 buckets, WAF, ECR repos) are prefixed with
+  `<env>` and the cluster name is per env — two systems in one account don't collide.
+- The state **bucket** is shared across envs (`eks-iac-tfstate`); only the **key** is
+  per-env. For separate AWS accounts, point each env's `backend.hcl` at that account's bucket.
 
 ## Teardown
 ```bash
-./scripts/teardown.sh
+./scripts/teardown.sh <env>
 ```

@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 # Pin the AWS Load Balancer Controller IAM policy to the chart version installed
 # in layer1/02. Keep in sync with the Helm chart's appVersion.
 variable "lbc_policy_version" {

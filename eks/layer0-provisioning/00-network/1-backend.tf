@@ -1,14 +1,10 @@
 terraform {
   required_version = ">= 1.9.0"
 
-  # Remote state — bucket/table created by bootstrap/00-tf-backend.
-  backend "s3" {
-    bucket         = "eks-iac-tfstate"
-    key            = "layer0/00-network/terraform.tfstate"
-    region         = "ap-southeast-1"
-    dynamodb_table = "eks-iac-tflock"
-    encrypt        = true
-  }
+  # Partial backend — bucket/key/region/table supplied at init via
+  # `-backend-config` (scripts/deploy.sh + envs/<env>/backend.hcl). The key is
+  # prefixed per env so multiple systems don't share state.
+  backend "s3" {}
 
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }

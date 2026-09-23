@@ -6,8 +6,14 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 # Account-level security services — each bills with usage → all default off.
-# Enable per-env (tfvars); prod/regulated turns these on.
+# ⚠️ GuardDuty detector, Security Hub, and the Config recorder are ONE-per-account/
+# region singletons: enable them in exactly ONE env per account (e.g. prod owns them),
+# else a second env's apply fails with "already exists".
 variable "enable_guardduty" {
   default = false
 }

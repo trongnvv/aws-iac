@@ -7,7 +7,7 @@
 resource "aws_subnet" "firewall" {
   count             = var.enable_network_firewall ? length(var.azs) : 0
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.firewall_subnet_cidrs[count.index]
+  cidr_block        = cidrsubnet(cidrsubnet(var.vpc_cidr, 8, 99), 4, count.index) # /28 in the .99 /24
   availability_zone = var.azs[count.index]
   tags              = { Name = "firewall-${var.azs[count.index]}" }
 }

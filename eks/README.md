@@ -33,18 +33,17 @@ sizing guidance**.
 
 ## Deploy
 
-One self-contained script per size (tfvars → layer0 → kubeconfig/env → layer1 →
-layer2); infra env vars are derived from `tofu output`.
-
-Prereq (once): `(cd ../foundation && ./apply.sh)` — S3 state backend + DNS zone.
+**Multi-env — one codebase, many systems.** Each env under `envs/<env>/` has its own
+state (S3 key prefix), toggles, and add-on lists, so a second system never collides.
+Prereq once: `(cd ../foundation && ./apply.sh)` — S3 state backend + DNS zone.
 
 ```bash
-export ACME_EMAIL=you@example.com   # all sizes  (cert-manager)
-export DOMAIN_FILTER=example.com    # medium/large (external-dns)
-./scripts/deploy-small.sh           # or deploy-medium.sh / deploy-large.sh
+./scripts/deploy.sh dev     # small preset (nothing paid)
+./scripts/deploy.sh prod    # large preset (full security, private API, egress firewall)
 ```
 
-Per-size folder lists + toggles: `docs/DEPLOY.md` and the `layer*/README.md` sizing tables.
+Add a new system: `cp -r envs/dev envs/<name>`, edit its `config.env`, then
+`./scripts/deploy.sh <name>`. Details + cost per preset: `docs/DEPLOY.md`.
 
 ## North-South networking
 

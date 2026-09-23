@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 # WAF bills per web ACL + rule + request → default off; enable per-env.
 variable "enable_waf" {
   default = false

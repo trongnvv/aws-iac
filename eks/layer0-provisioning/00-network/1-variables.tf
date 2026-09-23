@@ -6,12 +6,20 @@ variable "profile" {
   default = "default"
 }
 
+# Environment / system name — isolates state (key prefix) and prefixes
+# global-unique names so a second system doesn't collide.
+variable "env" {
+  default = "dev"
+}
+
 # Tags resources + sets the karpenter.sh/discovery value on app subnets.
 variable "cluster_name" {
   default = "eks-dev"
 }
 
 # /16: the VPC CNI assigns one VPC IP per pod, and CIDR can't be resized later.
+# All subnet CIDRs are derived from this (see 2-vpc.tf), so a whole env moves to a
+# non-overlapping range by setting just this one knob per env (peering/TGW-safe).
 variable "vpc_cidr" {
   default = "10.0.0.0/16"
 }
@@ -25,20 +33,8 @@ variable "nat_per_az" {
   default = false
 }
 
-# app subnets are /20 (4k IPs) for EKS pods; isolated /24 for DBs/caches.
-variable "public_subnet_cidrs" {
-  default = ["10.0.0.0/20", "10.0.16.0/20", "10.0.32.0/20"]
-}
-
-variable "app_subnet_cidrs" {
-  default = ["10.0.48.0/20", "10.0.64.0/20", "10.0.80.0/20"]
-}
-
-variable "isolated_subnet_cidrs" {
-  default = ["10.0.96.0/24", "10.0.97.0/24", "10.0.98.0/24"]
-}
-
 # Secondary CIDR for pod IPs (VPC CNI custom networking) — off by default.
+# Pod subnets are derived from this block.
 variable "enable_secondary_cidr" {
   default = false
 }
@@ -47,18 +43,10 @@ variable "secondary_cidr_block" {
   default = "100.64.0.0/16"
 }
 
-variable "pod_subnet_cidrs" {
-  default = ["100.64.0.0/18", "100.64.64.0/18", "100.64.128.0/18"]
-}
-
 # Centralized egress inspection (AWS Network Firewall). Expensive (~$285/mo/endpoint)
 # → off by default. When on, app egress is redirected: app → firewall endpoint → NAT.
 variable "enable_network_firewall" {
   default = false
-}
-
-variable "firewall_subnet_cidrs" {
-  default = ["10.0.99.0/28", "10.0.99.16/28", "10.0.99.32/28"]
 }
 
 variable "allowed_domains" {

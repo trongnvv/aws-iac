@@ -5,3 +5,7 @@ variable "region" {
 variable "profile" {
   default = "default"
 }
+
+variable "env" {
+  default = "dev"
+}

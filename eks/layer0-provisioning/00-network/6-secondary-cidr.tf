@@ -10,7 +10,7 @@ resource "aws_vpc_ipv4_cidr_block_association" "secondary" {
 resource "aws_subnet" "pod" {
   count             = var.enable_secondary_cidr ? length(var.azs) : 0
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.pod_subnet_cidrs[count.index]
+  cidr_block        = cidrsubnet(var.secondary_cidr_block, 2, count.index) # /18 per AZ
   availability_zone = var.azs[count.index]
   depends_on        = [aws_vpc_ipv4_cidr_block_association.secondary]
   tags = {

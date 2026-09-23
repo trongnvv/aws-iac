@@ -1,3 +1,11 @@
+# Subnet CIDRs derived from vpc_cidr so a whole env shifts to a non-overlapping
+# range by changing one knob. Layout (per AZ): public /20, app /20, isolated /24.
+locals {
+  public_cidrs   = [for i in range(length(var.azs)) : cidrsubnet(var.vpc_cidr, 4, i)]
+  app_cidrs      = [for i in range(length(var.azs)) : cidrsubnet(var.vpc_cidr, 4, i + 3)]
+  isolated_cidrs = [for i in range(length(var.azs)) : cidrsubnet(var.vpc_cidr, 8, i + 96)]
+}
+
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -14,7 +22,7 @@ resource "aws_internet_gateway" "igw" {
 resource "aws_subnet" "public" {
   count                   = length(var.azs)
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnet_cidrs[count.index]
+  cidr_block              = local.public_cidrs[count.index]
   availability_zone       = var.azs[count.index]
   map_public_ip_on_launch = true
   tags = {
@@ -28,7 +36,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "app" {
   count             = length(var.azs)
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.app_subnet_cidrs[count.index]
+  cidr_block        = local.app_cidrs[count.index]
   availability_zone = var.azs[count.index]
   tags = {
     Name                              = "app-${var.azs[count.index]}"
@@ -41,7 +49,7 @@ resource "aws_subnet" "app" {
 resource "aws_subnet" "isolated" {
   count             = length(var.azs)
   vpc_id            = aws_vpc.main.id
-  cidr_block        = var.isolated_subnet_cidrs[count.index]
+  cidr_block        = local.isolated_cidrs[count.index]
   availability_zone = var.azs[count.index]
   tags              = { Name = "isolated-${var.azs[count.index]}" }
 }

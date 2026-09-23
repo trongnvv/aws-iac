@@ -1,7 +1,7 @@
 # API audit log — every AWS API call, delivered to S3. Multi-region.
 resource "aws_s3_bucket" "trail" {
   count         = var.enable_cloudtrail ? 1 : 0
-  bucket        = var.cloudtrail_bucket_name
+  bucket        = "${var.env}-${var.cloudtrail_bucket_name}"
   force_destroy = true
 }
 

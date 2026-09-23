@@ -6,6 +6,10 @@ variable "profile" {
   default = "default"
 }
 
+variable "env" {
+  default = "dev"
+}
+
 # Backup storage + EBS snapshots cost money → default off; enable per-env.
 variable "enable_backup" {
   default = false
