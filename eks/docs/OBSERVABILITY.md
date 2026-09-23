@@ -1,0 +1,60 @@
+# Observability on EKS — options & the platform's approach
+
+Four ways to do observability on EKS, and where this repo lands.
+
+## 1. Three tiers
+
+| Tier | Role | Examples |
+|---|---|---|
+| Collect | On-cluster agent gathers metrics / logs / traces | OpenTelemetry Collector (ADOT), Grafana Alloy, Fluent Bit, Datadog Agent |
+| Backend | Stores the data | Prometheus/Mimir, Loki, Tempo, Elasticsearch, CloudWatch |
+| UI / Alert | Query, dashboard, alert | Grafana, Kibana, CloudWatch console, Datadog UI |
+
+Datadog bundles all three. Grafana / Elastic are backend + UI. AWS offers both
+CloudWatch (roll-your-own) and managed open source (AMP, AMG).
+
+## 2. Four approaches compared
+
+| | Datadog | Grafana stack (LGTM) | Elastic stack | AWS native |
+|---|---|---|---|---|
+| Components | SaaS all-in-one | Loki (logs) · Grafana · Tempo (traces) · Mimir/Prometheus (metrics) | Elasticsearch · Kibana · Beats/Elastic Agent · APM | CloudWatch Container Insights · X-Ray/Application Signals · AMP + AMG |
+| Operations | Almost none | Self-host: medium. Grafana Cloud = SaaS option | Heavy (JVM, shards, storage). ECK operator or Elastic Cloud | Light, managed |
+| Cost | Expensive; scales with hosts / GB logs / custom metrics | Cheap if self-hosted; logs/traces on S3 | Resource-hungry, storage-heavy | CloudWatch Logs ingest pricey; AMP/AMG reasonable |
+| Data location | Leaves the account (Datadog) | In your AWS account | In account (if self-hosted) | In account |
+| Strength | UX, correlation, fast setup | Flexible, open source, shared with on-prem | Deep log search, security/SIEM | AWS integration, IAM |
+
+## 3. Choosing by situation
+
+- **Small team, need speed, have budget, allowed to send data to SaaS** → Datadog
+- **Data must stay in-account, minimal ops** → AMP + AMG (metrics), CloudWatch Logs or OpenSearch (logs)
+- **Already on Prometheus/Grafana, want parity with on-prem** → Grafana LGTM
+- **Deep log search / security analytics** → Elastic or OpenSearch
+
+## 4. Common cloud-native pattern
+
+- Collect with **OpenTelemetry** (ADOT or Alloy) → no backend lock-in
+- Metrics: **AMP** · Logs: **Loki on S3** · Traces: **Tempo** · UI: **AMG**
+
+## 5. What this repo does today, and the recommended path
+
+Current state:
+- `layer2/01-observability` = **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager) — metrics + UI, self-hosted, **ephemeral** (`emptyDir`).
+- `layer0/06-observability-aws` = **AMP workspace + IAM** — a managed metrics backend, **not yet wired** to a collector.
+- Gaps: no logs, no traces, no OTel collector, AMG unused, Prometheus not durable (see `REVIEW.md` #2).
+
+Recommended per size (Grafana-LGTM-on-AWS, data in-account):
+
+| Size | Metrics | Logs | Traces | UI |
+|---|---|---|---|---|
+| Small | kube-prometheus-stack (ephemeral) | — | — | bundled Grafana |
+| Medium | kube-prometheus-stack + **PVC (gp3)** + retention | Loki on S3 (or CloudWatch) | — | bundled Grafana |
+| Large | **AMP** (remoteWrite from ADOT/Alloy) | Loki on S3 | **Tempo** | **AMG** |
+
+Collect with **OpenTelemetry (ADOT/Alloy)** from the start so the backend can change
+without touching apps.
+
+## 6. Compliance (regulated / finance)
+
+- **SaaS** (Datadog, Grafana Cloud): verify **data-residency** rules and **PCI-DSS**
+  scope before sending telemetry out of the account/country.
+- **Mask/redact** sensitive fields **at the collector**, regardless of backend.

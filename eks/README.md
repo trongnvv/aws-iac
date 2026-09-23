@@ -12,6 +12,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
 | Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
+| Compare observability options | `docs/OBSERVABILITY.md` (Datadog / Grafana LGTM / Elastic / AWS native + the platform's approach) |
 | See known gaps / hardening backlog | `docs/REVIEW.md` *(not needed to deploy)* |
 | Get the big picture | keep reading this file |
 
