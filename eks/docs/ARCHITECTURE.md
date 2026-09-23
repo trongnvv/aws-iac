@@ -3,7 +3,12 @@
 Each size builds on the previous. `foundation` (S3 state + Route 53/ACM) is shared
 by all. Diagrams are Mermaid — GitHub renders them inline.
 
-**Colour legend:** 🟣 foundation · 🔵 network/VPC · 🟠 edge (ingress) · 🟢 EKS · 🟦 add-ons · 🟡 AWS managed services · ⚪ external.
+**Colour legend:** 🟣 foundation · 🟠 edge/ingress · 🟢 EKS · 🟦 add-ons · 🔵 network (NAT/firewall/IGW) · 🟡 AWS managed services · ⚪ external.
+
+Notes that apply to every size:
+- Image pulls (ECR) and secret reads (Secrets Manager) go through **VPC interface
+  endpoints** — private, skipping the NAT — not shown to keep the diagrams clean.
+- Add-ons in the `layer1`/`layer2` boxes are Helm releases running as pods.
 
 ---
 
@@ -14,49 +19,44 @@ Cluster + core add-ons, public API, single NAT, nothing paid.
 ```mermaid
 flowchart TB
   internet([Internet]):::ext
-
   subgraph acct["AWS account · ap-southeast-1"]
     direction TB
-
-    subgraph found["foundation — run once, shared"]
-      tfstate[("S3 tfstate<br/>+ DynamoDB lock")]:::fnd
-      dns["Route 53 zone<br/>+ ACM cert"]:::fnd
-    end
-
-    ecr[("ECR")]:::svc
-
-    subgraph vpc["VPC — 3 AZ"]
-      igw["IGW"]:::net
-      subgraph pub["public subnets"]
+    found["<b>foundation · shared</b><br/>S3 tfstate + lock · Route 53 + ACM"]:::fnd
+    subgraph vpc["VPC · 3 AZ"]
+      direction TB
+      subgraph ingress["public subnets"]
         alb["ALB"]:::edge
-        nat["NAT ×1"]:::net
       end
-      subgraph app["private-app subnets"]
-        subgraph eks["EKS cluster · PUBLIC API"]
-          cp["control plane"]:::eks
-          nodes["system + Karpenter nodes"]:::eks
-          addons["add-ons:<br/>karpenter · metrics-server · LB controller<br/>cert-manager · external-secrets<br/>argocd · kube-prometheus-stack"]:::add
-        end
+      subgraph eks["EKS cluster · public API"]
+        direction LR
+        cp["control plane"]:::eks
+        nodes["nodes / pods"]:::eks
+        l1["<b>layer1</b><br/>karpenter · metrics-server · LBC<br/>cert-manager · external-secrets"]:::add
+        l2["<b>layer2</b><br/>argocd · kube-prometheus"]:::add
+      end
+      subgraph egr["egress"]
+        direction LR
+        nat["NAT ×1"]:::net --> igw["IGW"]:::net
       end
     end
+    svc["<b>AWS managed services</b><br/>ECR · Secrets Manager"]:::svc
   end
-
   internet --> alb --> nodes
-  dns -. DNS / TLS .-> alb
-  nodes --> nat --> igw --> internet
-  nodes -. pull images .-> ecr
+  found -. DNS/TLS .-> alb
+  nodes --> nat
+  igw --> internet
+  nodes -. images · secrets .-> svc
 
-  classDef ext  fill:#eceff1,stroke:#546e7a,color:#000
-  classDef fnd  fill:#ede7f6,stroke:#5e35b1,color:#000
-  classDef net  fill:#e3f2fd,stroke:#1565c0,color:#000
+  classDef ext fill:#eceff1,stroke:#546e7a,color:#000
+  classDef fnd fill:#ede7f6,stroke:#5e35b1,color:#000
+  classDef net fill:#e3f2fd,stroke:#1565c0,color:#000
   classDef edge fill:#fff3e0,stroke:#ef6c00,color:#000
-  classDef eks  fill:#e8f5e9,stroke:#2e7d32,color:#000
-  classDef add  fill:#e0f7fa,stroke:#00838f,color:#000
-  classDef svc  fill:#fffde7,stroke:#f9a825,color:#000
-  style found fill:#f5f0fb,stroke:#7e57c2,stroke-dasharray:4 3
+  classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
+  classDef add fill:#e0f7fa,stroke:#00838f,color:#000
+  classDef svc fill:#fffde7,stroke:#f9a825,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style pub fill:#fff8ef,stroke:#fb8c00
-  style app fill:#f3faf3,stroke:#43a047
+  style ingress fill:#fff8ef,stroke:#fb8c00
+  style egr fill:#eaf1fb,stroke:#3949ab
   style eks fill:#eaf6ea,stroke:#2e7d32
 ```
 
@@ -64,69 +64,52 @@ flowchart TB
 
 ## Medium (staging)
 
-Small **plus**: audit logging, secret encryption, network policy, image scanning,
-WAF at the edge, GuardDuty, backup, DNS/policy/event-scaling add-ons.
+Small **plus**: WAF at the edge, control-plane logging, secret encryption, network
+policy, GuardDuty, backup, image scanning, and DNS/policy/event-scaling add-ons.
 
 ```mermaid
 flowchart TB
   internet([Internet]):::ext
-
   subgraph acct["AWS account · ap-southeast-1"]
     direction TB
-
-    subgraph found["foundation"]
-      tfstate[("S3 tfstate + lock")]:::fnd
-      dns["Route 53 + ACM"]:::fnd
-    end
-
-    subgraph svcs["AWS managed services"]
-      cw[("CloudWatch<br/>control-plane logs")]:::svc
-      kms["KMS<br/>secret encryption"]:::svc
-      gd["GuardDuty"]:::svc
-      sm[("Secrets Manager")]:::svc
-      s3b[("S3 — Velero backups")]:::svc
-      ecr[("ECR — scan on push")]:::svc
-    end
-
-    subgraph vpc["VPC — 3 AZ"]
-      igw["IGW"]:::net
-      subgraph pub["public subnets"]
-        waf["WAF"]:::edge
-        alb["ALB"]:::edge
-        nat["NAT ×1"]:::net
+    found["<b>foundation · shared</b><br/>S3 tfstate + lock · Route 53 + ACM"]:::fnd
+    subgraph vpc["VPC · 3 AZ"]
+      direction TB
+      subgraph ingress["public subnets · ingress"]
+        direction TB
+        waf["WAF"]:::edge --> alb["ALB"]:::edge
       end
-      subgraph app["private-app subnets"]
-        subgraph eks["EKS · public API, restricted CIDRs"]
-          cp["control plane"]:::eks
-          nodes["system + Karpenter nodes"]:::eks
-          addons["add-ons: small<br/>+ external-dns · kyverno · keda<br/>+ velero · network-policy"]:::add
-        end
+      subgraph eks["EKS cluster · public API, restricted CIDRs"]
+        direction LR
+        cp["control plane"]:::eks
+        nodes["nodes / pods"]:::eks
+        l1["<b>layer1</b><br/>karpenter · metrics-server · LBC · external-dns<br/>cert-manager · external-secrets · kyverno · keda · netpol"]:::add
+        l2["<b>layer2</b><br/>argocd · kube-prometheus · velero"]:::add
+      end
+      subgraph egr["egress"]
+        direction LR
+        nat["NAT ×1"]:::net --> igw["IGW"]:::net
       end
     end
+    svc["<b>AWS managed services</b><br/>CloudWatch · KMS · GuardDuty<br/>Secrets Manager · S3 backup · ECR"]:::svc
   end
+  internet --> waf
+  alb --> nodes
+  found -. DNS/TLS .-> alb
+  nodes --> nat
+  igw --> internet
+  nodes -. logs·secrets·backup·images·threat .-> svc
 
-  internet --> waf --> alb --> nodes
-  dns -. DNS / TLS .-> alb
-  nodes --> nat --> igw --> internet
-  cp --> cw
-  cp --> kms
-  gd -. threat detection .-> eks
-  nodes -. Pod Identity .-> sm
-  nodes --> s3b
-  nodes -. images .-> ecr
-
-  classDef ext  fill:#eceff1,stroke:#546e7a,color:#000
-  classDef fnd  fill:#ede7f6,stroke:#5e35b1,color:#000
-  classDef net  fill:#e3f2fd,stroke:#1565c0,color:#000
+  classDef ext fill:#eceff1,stroke:#546e7a,color:#000
+  classDef fnd fill:#ede7f6,stroke:#5e35b1,color:#000
+  classDef net fill:#e3f2fd,stroke:#1565c0,color:#000
   classDef edge fill:#fff3e0,stroke:#ef6c00,color:#000
-  classDef eks  fill:#e8f5e9,stroke:#2e7d32,color:#000
-  classDef add  fill:#e0f7fa,stroke:#00838f,color:#000
-  classDef svc  fill:#fffde7,stroke:#f9a825,color:#000
-  style found fill:#f5f0fb,stroke:#7e57c2,stroke-dasharray:4 3
-  style svcs fill:#fffef4,stroke:#f9a825,stroke-dasharray:4 3
+  classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
+  classDef add fill:#e0f7fa,stroke:#00838f,color:#000
+  classDef svc fill:#fffde7,stroke:#f9a825,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style pub fill:#fff8ef,stroke:#fb8c00
-  style app fill:#f3faf3,stroke:#43a047
+  style ingress fill:#fff8ef,stroke:#fb8c00
+  style egr fill:#eaf1fb,stroke:#3949ab
   style eks fill:#eaf6ea,stroke:#2e7d32
 ```
 
@@ -134,81 +117,58 @@ flowchart TB
 
 ## Large (prod / regulated)
 
-Medium **plus**: private API, per-AZ NAT, **egress Network Firewall** (dedicated
-subnets + app-egress redirect), secondary pod CIDR, EFS, full security baseline,
-Managed Prometheus, service mesh, API gateway, progressive delivery, runtime security.
+Medium **plus**: CloudFront/Shield, private API, per-AZ NAT, **egress Network
+Firewall** (dedicated subnets + app-egress redirect), secondary pod CIDR, EFS,
+Managed Prometheus, full security baseline, service mesh, API gateway, progressive
+delivery, runtime security.
 
 ```mermaid
 flowchart TB
   internet([Internet]):::ext
-  partner([Exchange / partner<br/>allowlists our egress IP]):::ext
-
+  partner([Exchange / partner]):::ext
   subgraph acct["AWS account · ap-southeast-1"]
     direction TB
-
-    subgraph found["foundation"]
-      tfstate[("S3 tfstate + lock")]:::fnd
-      dns["Route 53 + ACM"]:::fnd
-    end
-
-    subgraph svcs["AWS managed services"]
-      cw[("CloudWatch")]:::svc
-      kms["KMS"]:::svc
-      amp[("Managed Prometheus")]:::svc
-      efs[("EFS")]:::svc
-      s3b[("S3 backups")]:::svc
-      ecr[("ECR + Inspector")]:::svc
-      sec["GuardDuty · CloudTrail<br/>Config · Security Hub"]:::svc
-    end
-
-    subgraph vpc["VPC — 3 AZ · primary + secondary CIDR"]
-      igw["IGW"]:::net
-      subgraph pub["public subnets"]
-        cf["CloudFront + Shield"]:::edge
-        waf["WAF"]:::edge
-        alb["ALB"]:::edge
-        nat["NAT ×3 · static EIP"]:::net
+    found["<b>foundation · shared</b><br/>S3 tfstate + lock · Route 53 + ACM"]:::fnd
+    subgraph vpc["VPC · 3 AZ · primary + secondary CIDR"]
+      direction TB
+      subgraph ingress["public subnets · ingress"]
+        direction TB
+        cf["CloudFront + Shield"]:::edge --> waf["WAF"]:::edge --> alb["ALB"]:::edge
       end
-      subgraph fw["firewall subnets"]
-        nfw["Network Firewall<br/>domain allowlist"]:::net
+      subgraph eks["EKS cluster · PRIVATE API"]
+        direction LR
+        cp["control plane"]:::eks
+        nodes["nodes / pods"]:::eks
+        l1["<b>layer1</b><br/>karpenter · LBC · external-dns · cert-manager<br/>external-secrets · kyverno · keda · dns-scale · netpol · metrics-server"]:::add
+        l2["<b>layer2</b><br/>argocd · kube-prometheus · velero<br/>argo-rollouts · kubecost · Kong · Istio mTLS · Falco"]:::add
       end
-      subgraph app["private-app + pod subnets"]
-        subgraph eks["EKS cluster · PRIVATE API"]
-          cp["control plane"]:::eks
-          nodes["system + Karpenter nodes / pods"]:::eks
-          addons["add-ons: medium<br/>+ dns-scale · argo-rollouts · kubecost<br/>+ Kong · Istio mTLS · Falco"]:::add
-        end
+      subgraph egr["egress · firewall subnets"]
+        direction LR
+        nfw["Network Firewall"]:::net --> nat["NAT ×3 · static EIP"]:::net --> igw["IGW"]:::net
       end
     end
+    svc["<b>AWS managed services</b><br/>CloudWatch · KMS · Managed Prometheus · EFS<br/>S3 backup · ECR + Inspector<br/>GuardDuty · CloudTrail · Config · Security Hub"]:::svc
   end
-
-  internet --> cf --> waf --> alb --> nodes
-  dns -. DNS / TLS .-> alb
-  nodes -->|egress| nfw --> nat --> igw --> internet
+  internet --> cf
+  alb --> nodes
+  found -. DNS/TLS .-> alb
+  nodes -->|egress| nfw
+  igw --> internet
   nat --> partner
-  cp --> cw
-  cp --> kms
-  cp --> amp
-  nodes --> efs
-  nodes --> s3b
-  nodes -. images .-> ecr
-  sec -. audit + threat .-> eks
+  nodes -. logs·metrics·secrets·backup·images·audit .-> svc
 
-  classDef ext  fill:#eceff1,stroke:#546e7a,color:#000
-  classDef fnd  fill:#ede7f6,stroke:#5e35b1,color:#000
-  classDef net  fill:#e3f2fd,stroke:#1565c0,color:#000
+  classDef ext fill:#eceff1,stroke:#546e7a,color:#000
+  classDef fnd fill:#ede7f6,stroke:#5e35b1,color:#000
+  classDef net fill:#e3f2fd,stroke:#1565c0,color:#000
   classDef edge fill:#fff3e0,stroke:#ef6c00,color:#000
-  classDef eks  fill:#e8f5e9,stroke:#2e7d32,color:#000
-  classDef add  fill:#e0f7fa,stroke:#00838f,color:#000
-  classDef svc  fill:#fffde7,stroke:#f9a825,color:#000
-  style found fill:#f5f0fb,stroke:#7e57c2,stroke-dasharray:4 3
-  style svcs fill:#fffef4,stroke:#f9a825,stroke-dasharray:4 3
+  classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
+  classDef add fill:#e0f7fa,stroke:#00838f,color:#000
+  classDef svc fill:#fffde7,stroke:#f9a825,color:#000
   style vpc fill:#f4f9ff,stroke:#1976d2
-  style pub fill:#fff8ef,stroke:#fb8c00
-  style fw fill:#eaf1fb,stroke:#3949ab
-  style app fill:#f3faf3,stroke:#43a047
+  style ingress fill:#fff8ef,stroke:#fb8c00
+  style egr fill:#eaf1fb,stroke:#3949ab
   style eks fill:#eaf6ea,stroke:#2e7d32
 ```
 
-> Egress path (large): pod → Network Firewall (allowlist) → NAT (static EIP) → IGW
-> → internet / partner. The static EIP is what exchanges allowlist.
+> Egress path (large): pod → Network Firewall (domain allowlist) → NAT (static EIP)
+> → IGW → internet / partner. The static EIP is what exchanges allowlist.
