@@ -12,7 +12,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | **Deploy it** | **`docs/DEPLOY.md`** → `scripts/deploy.sh <env>` (dev/prod) |
 | Do it by hand, small steps (learn/debug) | `docs/WALKTHROUGH-dev.md` |
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
-| Understand a layer / pick a size | `layer0-provisioning/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
+| Understand the structure | Structure section below · `modules/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
 | Compare observability options | `docs/OBSERVABILITY.md` (Datadog / Grafana LGTM / Elastic / AWS native + the platform's approach) |
 | See known gaps / hardening backlog | `docs/REVIEW.md` *(not needed to deploy)* |
@@ -20,18 +20,21 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
 New here? Read this file top-to-bottom once, then follow `docs/DEPLOY.md`.
 
-## Layers
+## Structure (modules + per-env roots)
 
-| Layer | Tool | What |
+| Part | Tool | What |
 |---|---|---|
-| `../foundation/` | OpenTofu | shared prerequisites (run once): S3 state backend + Route 53 zone + ACM cert |
-| `layer0-provisioning/` | OpenTofu | AWS resources: network (+egress firewall), EKS, Karpenter infra, add-on IAM, ECR, security, observability, backup, WAF |
+| `../foundation/` | OpenTofu | shared prereqs (run once): S3 state backend + Route 53 zone + ACM cert |
+| `modules/` | OpenTofu | **reusable building blocks**: network · eks · karpenter-infra · addon-iam · ecr · security-baseline · observability-aws · backup-aws · waf |
+| `envs/<env>/<NN-layer>/` | OpenTofu | **thin per-env roots** that call the modules; own S3 state (key `<env>/layer0/<layer>`), env-specific values inline |
 | `layer1-addons/` | Helmfile | core cluster add-ons (autoscaling, ingress, DNS, certs, secrets, policy) |
 | `layer2-platform/` | Helmfile | platform & apps (GitOps, observability, backup, delivery, mesh, security) |
 
-Subfolders are numbered by apply order (layer0 = dependency order; layer1/2 = priority).
-Each layer has its own `README.md` with the full folder list and **small/medium/large
-sizing guidance**.
+Each env is a stack of per-layer roots — `envs/dev/00-network` … `08-waf` — each a
+few lines wiring one module + its S3 backend + upstream `terraform_remote_state`.
+Layer0 = dependency order; layer1/2 = priority. **Sizing is per env**: `dev` roots =
+small preset, `prod` roots = large preset; the knobs are the module inputs set in
+each root's `main.tf`.
 
 ## Deploy
 
@@ -44,7 +47,8 @@ Prereq once: `(cd ../foundation && ./apply.sh)` — S3 state backend + DNS zone.
 ./scripts/deploy.sh prod    # large preset (full security, private API, egress firewall)
 ```
 
-Add a new system: `cp -r envs/dev envs/<name>`, edit its `config.env`, then
+Add a new system: `cp -r envs/dev envs/<name>`, edit the roots' `main.tf` (env name,
+`cluster_name`, CIDR, `enable_*` toggles) + `config.env` (add-on lists), then
 `./scripts/deploy.sh <name>`. Details + cost per preset: `docs/DEPLOY.md`.
 
 ## North-South networking
@@ -104,6 +108,21 @@ Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (stat
 Managed add-ons are plumbing AWS lifecycle-manages; the controllers that make the
 cluster actually usable (autoscaling, ingress, DNS, certs, secrets, policy, GitOps)
 are Helm-only. They complement each other — neither replaces the other.
+
+## Single-cluster notes (avoid overlaps)
+
+Some add-ons overlap — pick one per cluster:
+- **CoreDNS autoscaling** is native in the managed `coredns` add-on — do **not** also
+  run `cluster-proportional-autoscaler` (they fight over replicas). `09-dns-scale` now
+  ships only NodeLocal DNSCache.
+- **Metrics backend:** self-host `kube-prometheus-stack` (layer2/01) **or** AMP+AMG
+  (`06-observability-aws`) — not both. If using AMP, point Prometheus `remoteWrite` at it.
+- **North-south API:** Kong (layer2/05) **or** Istio ingress (layer2/06) — Istio's
+  value here is east-west mTLS; don't run both as the API gateway.
+- **Runtime security:** Falco (layer2/07) **or** GuardDuty runtime monitoring — not both.
+- **Storage:** EBS CSI is a managed add-on (`enable_ebs_csi`, on by default) + a `gp3`
+  default StorageClass (`manifests/gp3-default-storageclass.yaml`, applied by deploy.sh).
+  Don't also enable the standalone metrics-server managed add-on (installed via Helm).
 
 ## Teardown
 

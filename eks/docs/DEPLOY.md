@@ -19,14 +19,19 @@ Each run applies layer0 (`00→08`) into `<env>`-prefixed state, wires the kubec
 then applies the env's layer1/layer2 add-on lists. Infra vars come from `tofu output`.
 
 ## envs/&lt;env&gt;/
-| File | What |
+Each env is a set of **per-layer roots** that call `../../../modules/*`:
+| Path | What |
 |---|---|
-| `backend.hcl` | S3 bucket + lock table + region. State bucket is shared; the **key** is `<env>/layer0/<folder>/...` |
-| `config.env` | `TF_VAR_env`, `TF_VAR_cluster_name`, the `enable_*` toggles, `ACME_EMAIL`/`DOMAIN_FILTER`, and the `L1`/`L2` add-on lists + `NETPOL` |
+| `envs/<env>/<NN-layer>/main.tf` | one root: concrete S3 backend (key `<env>/layer0/<layer>`), provider, `terraform_remote_state` for deps, one `module` call with this env's values (cluster_name, CIDR, `enable_*`), and outputs |
+| `envs/<env>/config.env` | helmfile-only: `ACME_EMAIL`/`DOMAIN_FILTER` + the `L1`/`L2` add-on lists + `NETPOL` |
 
-**Add a new system:** `cp -r envs/dev envs/staging`, edit `envs/staging/config.env`
-(env name, cluster_name, toggles, add-on lists), then `./scripts/deploy.sh staging`.
-It gets isolated state and `<env>`-prefixed resource names automatically.
+Modules are shared in `modules/`; only the roots differ per env. State bucket is shared
+(`eks-iac-tfstate`); the **key** is `<env>`-prefixed. Global names (buckets, WAF, ECR)
+are `<env>`-prefixed inside the modules; cluster name is per env.
+
+**Add a new system:** `cp -r envs/dev envs/staging`, edit each root's `main.tf`
+(env, cluster_name, CIDR, toggles) + `config.env` (add-on lists), then
+`./scripts/deploy.sh staging`. Isolated state + `<env>`-prefixed names automatically.
 
 ## Cost per preset
 `ap-southeast-1`, 24/7 monthly. Billing is hourly — a short run + `teardown.sh` costs a few dollars.
