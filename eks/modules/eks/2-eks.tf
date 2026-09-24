@@ -26,7 +26,6 @@ module "eks" {
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
 
-  # P0 toggles (env-driven).
   cluster_enabled_log_types = var.enable_control_plane_logging ? var.control_plane_log_types : []
 
   create_kms_key            = var.enable_secret_encryption

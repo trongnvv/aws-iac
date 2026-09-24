@@ -14,8 +14,7 @@ for the `default` profile the repo uses.
 3. **Credentials on your machine** for the CLI profile `default`.
 
 ## 1. Permissions this stack needs
-`foundation` alone creates an S3 bucket, a DynamoDB table, a Route 53 zone, and an
-ACM cert. The full `eks` stack also creates VPC, EKS, IAM roles, ECR, etc. — broad.
+`foundation` alone creates an S3 bucket, a Route 53 zone, and an ACM cert. The full `eks` stack also creates VPC, EKS, IAM roles, ECR, etc. — broad.
 
 - **Personal lab:** attach the AWS-managed policy **`AdministratorAccess`** to your
   identity. Simplest; fine for an account only you use.

@@ -1,11 +1,11 @@
 terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
-    bucket         = "eks-iac-tfstate"
-    key            = "dev/layer0/08-waf/terraform.tfstate"
-    region         = "ap-southeast-1"
-    dynamodb_table = "eks-iac-tflock"
-    encrypt        = true
+    bucket       = "eks-iac-tfstate"
+    key          = "dev/layer0/08-waf/terraform.tfstate"
+    region       = "ap-southeast-1"
+    use_lockfile = true
+    encrypt      = true
   }
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
@@ -21,7 +21,6 @@ module "waf" {
   source = "../../../modules/waf"
   env    = "dev"
   region = "ap-southeast-1"
-  # enable_waf off (default) for dev
 }
 
 output "web_acl_arn" { value = module.waf.web_acl_arn }

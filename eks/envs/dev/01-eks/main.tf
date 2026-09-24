@@ -1,11 +1,11 @@
 terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
-    bucket         = "eks-iac-tfstate"
-    key            = "dev/layer0/01-eks/terraform.tfstate"
-    region         = "ap-southeast-1"
-    dynamodb_table = "eks-iac-tflock"
-    encrypt        = true
+    bucket       = "eks-iac-tfstate"
+    key          = "dev/layer0/01-eks/terraform.tfstate"
+    region       = "ap-southeast-1"
+    use_lockfile = true
+    encrypt      = true
   }
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
@@ -33,7 +33,6 @@ module "eks" {
   region         = "ap-southeast-1"
   vpc_id         = data.terraform_remote_state.network.outputs.vpc_id
   app_subnet_ids = data.terraform_remote_state.network.outputs.app_subnet_ids
-  # small: public API, paid toggles off (module defaults)
 }
 
 output "cluster_name" { value = module.eks.cluster_name }

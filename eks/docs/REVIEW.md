@@ -5,8 +5,8 @@ are done; what remains is Medium/Low hardening.
 
 ## Resolved
 - **Remote state wired.** All layer0 folders + their `terraform_remote_state`
-  reads use the S3 backend (bucket `eks-iac-tfstate`, lock `eks-iac-tflock`);
-  `bootstrap` stays local. (was High #1)
+  reads use the S3 backend (bucket `eks-iac-tfstate`, native S3 locking `use_lockfile`);
+  `foundation` stays local. (was High #1)
 - **Network Firewall done right.** Folded into `00-network` with dedicated
   firewall subnets + app-egress redirect (app → firewall endpoint → NAT), gated by
   `enable_network_firewall`. (was High #2)
