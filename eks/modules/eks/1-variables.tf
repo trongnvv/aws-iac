@@ -96,6 +96,14 @@ variable "system_desired_size" {
 variable "vpc_id" {}
 variable "app_subnet_ids" {}
 
+# IAM principals (e.g. SSO permission-set role ARNs) granted cluster-admin via
+# Access Entries — lets them view/manage K8s objects in the console. The cluster
+# creator already has admin; list additional console/SSO roles here.
+variable "admin_principal_arns" {
+  type    = list(string)
+  default = []
+}
+
 # EBS CSI driver as a managed add-on (gp3 dynamic block volumes). Driver is free;
 # EBS volumes cost only when PVCs are created. Default on — needed for any PVC.
 variable "enable_ebs_csi" {

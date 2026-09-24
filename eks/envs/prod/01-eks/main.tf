@@ -40,6 +40,11 @@ module "eks" {
   enable_pod_eni                 = true
   enable_network_policy          = true
   enable_efs_csi                 = true
+
+  # SSO permission-set role(s) granted K8s console access (fixes "Unauthorized").
+  admin_principal_arns = [
+    # "arn:aws:iam::<account-id>:role/aws-reserved/sso.amazonaws.com/ap-southeast-1/AWSReservedSSO_<PermissionSet>_<hash>",
+  ]
 }
 
 output "cluster_name" { value = module.eks.cluster_name }

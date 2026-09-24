@@ -33,6 +33,13 @@ module "eks" {
   region         = "ap-southeast-1"
   vpc_id         = data.terraform_remote_state.network.outputs.vpc_id
   app_subnet_ids = data.terraform_remote_state.network.outputs.app_subnet_ids
+
+  # SSO permission-set role(s) that need K8s access in the console (fixes "Unauthorized").
+  # Get the role ARN: AWS console shows the assumed-role; map it to the underlying
+  # AWSReservedSSO_* role ARN. Leave empty = only the cluster creator has admin.
+  admin_principal_arns = [
+    # "arn:aws:iam::<account-id>:role/aws-reserved/sso.amazonaws.com/ap-southeast-1/AWSReservedSSO_<PermissionSet>_<hash>",
+  ]
 }
 
 output "cluster_name" { value = module.eks.cluster_name }

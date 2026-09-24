@@ -26,6 +26,20 @@ module "eks" {
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
 
+  # Extra principals (e.g. SSO permission-set roles) granted cluster-admin so they
+  # can view/manage K8s objects in the console. Fixes "Unauthorized" on the console.
+  access_entries = {
+    for arn in var.admin_principal_arns : arn => {
+      principal_arn = arn
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
+
   cluster_enabled_log_types = var.enable_control_plane_logging ? var.control_plane_log_types : []
 
   create_kms_key            = var.enable_secret_encryption
