@@ -38,7 +38,7 @@ module "eks" {
   # Get the role ARN: AWS console shows the assumed-role; map it to the underlying
   # AWSReservedSSO_* role ARN. Leave empty = only the cluster creator has admin.
   admin_principal_arns = [
-    # "arn:aws:iam::<account-id>:role/aws-reserved/sso.amazonaws.com/ap-southeast-1/AWSReservedSSO_<PermissionSet>_<hash>",
+    "arn:aws:iam::391511533175:root",
   ]
 }
 
