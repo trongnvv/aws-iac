@@ -16,6 +16,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | **Understand EKS deeply** (create mechanics, AWS ecosystem, runtime) | `docs/MODULES.md` |
 | **Networking** (north-south, ALB vs NLB, egress, endpoints) | `docs/NETWORKING.md` |
 | **Something's broken** (symptom → fix) | `docs/TROUBLESHOOTING.md` |
+| Post-cluster test ideas (ingress/gRPC, observability, CI/CD) | `docs/TEST-PLAN.md` |
 | Understand the structure | Structure section below · `modules/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
 | Compare observability options | `docs/OBSERVABILITY.md` (Datadog / Grafana LGTM / Elastic / AWS native + the platform's approach) |
