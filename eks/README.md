@@ -13,6 +13,8 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | **Deploy it** | **`docs/DEPLOY.md`** → `scripts/deploy.sh <env>` (dev/prod) |
 | Do it by hand, small steps (learn/debug) | `docs/hands-on/WALKTHROUGH-dev.md` |
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
+| **Understand EKS deeply** (create mechanics, AWS ecosystem, runtime) | `docs/MODULES.md` |
+| **Something's broken** (symptom → fix) | `docs/TROUBLESHOOTING.md` |
 | Understand the structure | Structure section below · `modules/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
 | Compare observability options | `docs/OBSERVABILITY.md` (Datadog / Grafana LGTM / Elastic / AWS native + the platform's approach) |

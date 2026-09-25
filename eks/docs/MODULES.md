@@ -2,7 +2,75 @@
 
 Expert view of what `tofu apply` on `modules/eks` provisions, **what happens when the
 cluster is created**, and **how each component runs at runtime**. For per-size cluster
-composition see `ARCHITECTURE.md`; for plain inputs/outputs see `../modules/README.md`.
+composition see `ARCHITECTURE.md`; for plain inputs/outputs see `../modules/README.md`;
+for symptom→fix see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+
+---
+
+## 0. EKS is an orchestrator of other AWS services
+
+EKS is **not self-contained** — the managed control plane is small; the cluster only
+works because EKS drives ~20 other AWS services on your behalf. Knowing *which service
+does what, and when it's called* is the difference between "I run kubectl" and "I can
+debug it". Map of everything a running cluster touches:
+
+| Service | Role in the cluster | When it's called |
+|---|---|---|
+| **IAM** | 5 role types (see below) — the identity behind every action | every API call, node boot, pod cred fetch |
+| **STS** | issues short-lived creds; `AssumeRole`, `GetCallerIdentity` | `aws eks get-token` (your kubectl auth), IRSA |
+| **EKS Auth API** | `AssumeRoleForPodIdentity` — pod creds without OIDC | every Pod Identity credential fetch |
+| **EC2** | worker instances, **ENIs** (pod IPs + control-plane), **EBS** root/data vols, **security groups**, EIP | node launch, pod scheduling, PVC bind |
+| **EC2 Auto Scaling** | ASG behind each managed node group | MNG desired-size changes |
+| **EC2 Fleet / Spot** | Karpenter launches instances directly (no ASG) | just-in-time scale-up |
+| **Launch Templates** | node config (AMI, SG, user-data/nodeadm) | every node launch |
+| **SSM Parameter Store** | resolves the **AL2023 EKS-optimized AMI** ID | node group / Karpenter AMI lookup |
+| **VPC** | subnets, route tables, IGW, **NAT+EIP**, endpoints | all cluster networking |
+| **ELB (ALB/NLB)** | created by AWS LB Controller from Ingress/Service | ingress provisioning |
+| **Route 53** | private hosted zone (private endpoint) + external-dns records | private API resolve, DNS records |
+| **ACM** | TLS certs for ALB/NLB | HTTPS ingress |
+| **KMS** | envelope-encrypts etcd Secrets + EBS volumes | secret write, volume create |
+| **ECR** | container image registry | every image pull |
+| **S3** | tofu state, Velero backups, Loki chunks; **gateway endpoint** for ECR layers | state ops, backup, image pull |
+| **SQS** | Karpenter **interruption queue** | spot reclaim / rebalance |
+| **EventBridge** | routes EC2 spot-interruption / rebalance / health events → SQS | node interruption |
+| **CloudWatch** | control-plane logs, Container Insights metrics/logs | logging enabled |
+| **Amazon Managed Prometheus / Grafana** | metrics store + dashboards (alt to self-host) | observability-aws layer |
+| **Secrets Manager** | source of truth for External Secrets Operator | secret sync |
+| **GuardDuty / CloudTrail / Config / Security Hub / Inspector** | audit, runtime threat detection, compliance, image CVE scan | security-baseline layer |
+| **Systems Manager (Session Manager)** | shell into nodes with no SSH/bastion | node debugging |
+
+### The 5 IAM roles (who assumes what — the part people get wrong)
+
+```
+1. Cluster service role   trust: eks.amazonaws.com
+   → AmazonEKSClusterPolicy. Lets the CONTROL PLANE manage ENIs, ELBs, SGs in your VPC.
+
+2. Node IAM role          trust: ec2.amazonaws.com   (kubelet uses instance creds)
+   → AmazonEKSWorkerNodePolicy + AmazonEC2ContainerRegistryReadOnly (+ CNI policy)
+   → mapped to K8s group system:nodes via the auto EC2_LINUX access entry.
+
+3. Karpenter node role    = same shape as (2); JIT nodes assume it via instance profile.
+
+4. Karpenter controller role   trust: pods.eks.amazonaws.com  (Pod Identity)
+   → ec2:RunInstances/CreateFleet/TerminateInstances + sqs:* on the interruption queue.
+
+5. Pod Identity / IRSA roles (per add-on)   trust: pods.eks.amazonaws.com
+   → LBC, ESO, external-dns, cert-manager, EBS-CSI, KEDA, kubecost — least-priv per controller.
+```
+
+Two auth planes must both agree: **IAM says who you are**, **K8s RBAC (via Access
+Entries) says what you can do**. A valid IAM principal with no access entry = authenticated
+but `Unauthorized`.
+
+### Three ways to create — one API
+
+Console wizard, `eksctl`, `aws eks create-cluster`, and this Terraform module all funnel
+into the **same `CreateCluster` API call** — they differ only in how much they pre-create
+for you. This module is explicit: `modules/network` makes the VPC first, then the EKS
+call references it. `eksctl` hides a CloudFormation stack that does both. The console
+makes you pick pre-existing pieces. **`CreateCluster` is asynchronous** — it returns
+immediately with status `CREATING`; the ~10-minute provisioning happens server-side and
+tofu polls `DescribeCluster` until `ACTIVE`. Everything in §1 below is that poll loop.
 
 ---
 
