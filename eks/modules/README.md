@@ -3,6 +3,8 @@
 Reusable OpenTofu building blocks. Each is pure — inputs → resources → outputs, with
 **no backend or provider config** (those live in the env roots `envs/<env>/<layer>/`).
 
+> Detailed internal diagrams for `network` + `eks`: [`../docs/MODULES.md`](../docs/MODULES.md).
+
 | Module | What | Key outputs |
 |---|---|---|
 | `network` | VPC, subnets (cidrsubnet-derived), NAT, endpoints, secondary CIDR, egress firewall | vpc_id, app_subnet_ids, nat_public_ips |

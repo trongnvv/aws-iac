@@ -7,10 +7,11 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 
 | I want to… | Read |
 |---|---|
-| **No AWS credentials yet** | `docs/AWS-CREDENTIALS.md` — get keys / SSO for the `default` profile |
+| **No AWS credentials yet** | `docs/hands-on/AWS-CREDENTIALS.md` — get keys / SSO for the `default` profile |
+| Push a local image to ECR | `docs/hands-on/PUSH-IMAGE-TO-ECR.md` |
 | **First time — set up shared prereqs** | `../foundation/README.md` — S3 state backend + Route 53 zone (run once) |
 | **Deploy it** | **`docs/DEPLOY.md`** → `scripts/deploy.sh <env>` (dev/prod) |
-| Do it by hand, small steps (learn/debug) | `docs/WALKTHROUGH-dev.md` |
+| Do it by hand, small steps (learn/debug) | `docs/hands-on/WALKTHROUGH-dev.md` |
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
 | Understand the structure | Structure section below · `modules/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
