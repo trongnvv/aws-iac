@@ -26,7 +26,7 @@ export VPC_ID=$(cd "$ENVDIR/00-network" && tofu output -raw vpc_id)
 export KARPENTER_QUEUE_NAME=$(cd "$ENVDIR/02-karpenter-infra" && tofu output -raw karpenter_queue_name)
 export KARPENTER_NODE_ROLE=$(cd "$ENVDIR/02-karpenter-infra" && tofu output -raw karpenter_node_iam_role_name)
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
-kubectl apply -f manifests/gp3-default-storageclass.yaml   # default StorageClass (EBS CSI)
+kubectl apply -f ad-hoc/gp3-default-storageclass.yaml   # default StorageClass (EBS CSI)
 echo "${L2:-}" | grep -q velero && export BACKUP_BUCKET=$(cd "$ENVDIR/06-backup-aws" && tofu output -raw velero_bucket)
 echo "${L1:-}" | grep -q 09-dns-scale && export DNS_CLUSTER_IP=$(kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}')
 
