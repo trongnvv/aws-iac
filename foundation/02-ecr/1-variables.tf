@@ -9,7 +9,11 @@ variable "profile" {
 # Shared registry — one image built once, promoted (same digest) across all envs.
 # Repo names are NOT env-prefixed (that's the whole point of a shared ECR).
 variable "repo_names" {
-  default = ["app"]
+  default = [
+    "app",
+    "grpc-conn-debug/client", # ad-hoc gRPC LB lab (eks/ad-hoc/grpc-conn-debug)
+    "grpc-conn-debug/server",
+  ]
 }
 
 # Enhanced scanning uses Amazon Inspector (bills per scan) → default off.

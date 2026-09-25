@@ -39,6 +39,82 @@ debug it". Map of everything a running cluster touches:
 | **GuardDuty / CloudTrail / Config / Security Hub / Inspector** | audit, runtime threat detection, compliance, image CVE scan | security-baseline layer |
 | **Systems Manager (Session Manager)** | shell into nodes with no SSH/bastion | node debugging |
 
+### How they interact at runtime
+
+**(A) Identity & lifecycle** — how every actor authenticates and what the control plane
+reaches for. Three separate credential flows converge on IAM: your kubectl (via STS), the
+node (via its role), and pods (via the Pod Identity agent).
+
+```mermaid
+flowchart TB
+  user(["you / CI · kubectl"]):::ext
+  sts["STS"]:::sec
+  iam["IAM (5 roles)"]:::sec
+  eauth["EKS Auth"]:::sec
+  cp["EKS control plane<br/>(AWS-managed)"]:::mgmt
+  kms["KMS"]:::sec
+  cw["CloudWatch"]:::aws
+  node["nodes / kubelet"]:::eks
+  pod["pods"]:::eks
+  pia["pod-identity-agent"]:::eks
+
+  user -->|"get-token (presigned STS)"| sts -->|identity| cp
+  node -->|"register (node role)"| cp
+  cp -->|"envelope-encrypt secrets"| kms
+  cp -->|"api/audit logs"| cw
+  pod -->|"SDK → creds"| pia -->|AssumeRoleForPodIdentity| eauth --> iam
+  iam -. "trust: pods.eks / ec2 / eks" .- eauth
+
+  classDef ext fill:#eceff1,stroke:#546e7a,color:#000
+  classDef sec fill:#fffde7,stroke:#f9a825,color:#000
+  classDef aws fill:#fff3e0,stroke:#ef6c00,color:#000
+  classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
+  classDef mgmt fill:#e8f5e9,stroke:#1b5e20,stroke-dasharray:5 3,color:#000
+```
+
+**(B) Controllers drive AWS** — the cluster's real work is in-cluster controllers turning
+Kubernetes objects into AWS resources. Each holds a Pod Identity role and calls exactly one
+service; read each column top-to-bottom as one closed loop.
+
+```mermaid
+flowchart TB
+  subgraph ctls["in-cluster controllers"]
+    direction LR
+    kar["Karpenter"]:::eks
+    csi["EBS-CSI"]:::eks
+    eso["ext-secrets"]:::eks
+    cm["cert-manager"]:::eks
+    edns["external-dns"]:::eks
+    lbc["LB Controller"]:::eks
+    node2["kubelet"]:::eks
+  end
+  subgraph svc["AWS services they drive"]
+    direction LR
+    ec2["EC2 Fleet/ASG<br/>SSM(AMI)"]:::aws
+    ebs["EBS + KMS"]:::aws
+    sm["Secrets Mgr"]:::aws
+    acm["ACM"]:::aws
+    r53["Route 53"]:::aws
+    elb["ELB (ALB/NLB)"]:::aws
+    ecr["ECR + S3"]:::aws
+  end
+  evt["EventBridge → SQS"]:::aws
+
+  kar -->|"RunInstances/CreateFleet"| ec2
+  csi -->|"create/attach vol (encrypt)"| ebs
+  eso -->|sync| sm
+  cm -->|issue/validate| acm
+  edns -->|upsert records| r53
+  lbc -->|create/reconcile| elb
+  node2 -->|pull images| ecr
+  evt -->|spot interruption| kar
+
+  classDef aws fill:#fff3e0,stroke:#ef6c00,color:#000
+  classDef eks fill:#e8f5e9,stroke:#2e7d32,color:#000
+  style ctls fill:#f3faf3,stroke:#2e7d32
+  style svc fill:#fff8ef,stroke:#fb8c00
+```
+
 ### The 5 IAM roles (who assumes what — the part people get wrong)
 
 ```
@@ -232,7 +308,8 @@ flowchart TB
     direction TB
     igw["IGW"]:::net
     subgraph pub["public subnets ×3 · /20 · tag role/elb"]
-      alb["ALB (from LBC)"]:::edge
+      alb["ALB — L7 (from Ingress)"]:::edge
+      nlb["NLB — L4 (from Service LB)"]:::edge
       nat["NAT + EIP = static egress IP"]:::net
     end
     subgraph app["private-app subnets ×3 · /20<br/>internal-elb + karpenter.sh/discovery"]
@@ -247,7 +324,8 @@ flowchart TB
     ep["VPC endpoints<br/>S3 gw (free) · ECR · SecretsManager"]:::svc
   end
 
-  internet -->|ingress| alb --> appn
+  internet -->|"L7 HTTP/S"| alb --> appn
+  internet -->|"L4 TCP/UDP/TLS"| nlb --> appn
   appn -->|"egress: app-rt 0.0.0.0/0"| nat
   appn -. "firewall on" .-> nfw --> nat
   nat --> igw --> internet
@@ -268,8 +346,11 @@ flowchart TB
 ```
 
 **Packet paths** (route table = longest-prefix match; the `local` VPC route always wins for in-VPC):
-- **Ingress:** internet → ALB (public subnet, provisioned by LB Controller) → **pod IP**
-  directly (target-type `ip`, thanks to VPC CNI real IPs).
+- **Ingress:** internet → **ALB** (L7, from an `Ingress`) or **NLB** (L4, from a
+  `Service type=LoadBalancer`) in the public subnet, both provisioned by the LB Controller
+  → **pod IP** directly (target-type `ip`, thanks to VPC CNI real IPs). ALB for HTTP/host/
+  path routing + WAF; NLB for TCP/UDP/TLS, static EIP, and source-IP preservation. Full
+  comparison, egress, and other edge options: [`NETWORKING.md`](NETWORKING.md).
 - **Egress:** pod → app-rt `0.0.0.0/0` → **NAT** (public subnet) → IGW → internet. The
   source IP the internet sees = the **NAT EIP** (what partners allowlist). Firewall on:
   pod → **firewall endpoint** → NAT → IGW.

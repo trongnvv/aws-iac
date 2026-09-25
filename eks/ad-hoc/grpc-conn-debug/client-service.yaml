@@ -1,0 +1,15 @@
+# HTTP REST front-end of the client (drives on-demand gRPC calls + benchmarks).
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-client
+  labels:
+    app.kubernetes.io/name: grpc-client
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: grpc-client
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

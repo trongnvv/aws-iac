@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: grpc-debug
+
+resources:
+- namespace.yaml
+- server-deployment.yaml
+- server-service.yaml
+- client-deployment.yaml
+- client-service.yaml
+- ingress.yaml
+
+# Point these at your ECR (see README). Rewrite in place with:
+#   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+#   REGISTRY=$ACCOUNT.dkr.ecr.ap-southeast-1.amazonaws.com
+#   kustomize edit set image \
+#     grpc-server=$REGISTRY/grpc-conn-debug/server:v1 \
+#     grpc-client=$REGISTRY/grpc-conn-debug/client:v1
+images:
+- name: grpc-client
+  newName: ACCOUNT.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/client
+  newTag: v1
+- name: grpc-server
+  newName: ACCOUNT.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/server
+  newTag: v1

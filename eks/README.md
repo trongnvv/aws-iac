@@ -14,6 +14,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | Do it by hand, small steps (learn/debug) | `docs/hands-on/WALKTHROUGH-dev.md` |
 | See the architecture per size | `docs/ARCHITECTURE.md` (Mermaid diagrams: small / medium / large) |
 | **Understand EKS deeply** (create mechanics, AWS ecosystem, runtime) | `docs/MODULES.md` |
+| **Networking** (north-south, ALB vs NLB, egress, endpoints) | `docs/NETWORKING.md` |
 | **Something's broken** (symptom → fix) | `docs/TROUBLESHOOTING.md` |
 | Understand the structure | Structure section below · `modules/README.md` · `layer1-addons/README.md` · `layer2-platform/README.md` |
 | Set env vars for a manual run | `env.sh.example` |
@@ -54,25 +55,17 @@ Add a new system: `cp -r envs/dev envs/<name>`, edit the roots' `main.tf` (env n
 `cluster_name`, CIDR, `enable_*` toggles) + `config.env` (add-on lists), then
 `./scripts/deploy.sh <name>`. Details + cost per preset: `docs/DEPLOY.md`.
 
-## North-South networking
+## Networking (north-south, egress, intra-VPC)
 
-Traffic in and out of the cluster, split across layers.
+```
+Inbound:  Internet → [CloudFront → WAF] → [ALB (L7) / NLB (L4), LBC] → [API GW (Kong)] → Service
+Outbound: Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (static EIP)] → partner
+```
+- Inbound: `layer1/02-lb-controller` (ALB *and* NLB) · `03-external-dns` · `04-cert-manager` · WAF `layer0/08` · Kong `layer2/05`.
+- Outbound: static egress IP = `00-network` output `nat_public_ips` · filtering `layer1/07` · inspection `enable_network_firewall` / Istio egress.
 
-**Inbound edge**
-```
-Internet → [CloudFront → WAF/Shield] → [ALB/NLB (LBC)] → [API GW (Kong)] → Service
-```
-- ALB/NLB + DNS + TLS: `layer1/02-lb-controller` · `03-external-dns` · `04-cert-manager`
-- WAF: `layer0/08-waf` (attach via the Ingress annotation `alb.ingress.kubernetes.io/wafv2-acl-arn`)
-- API management: `layer2/05-api-gateway` (Kong)
-
-**Outbound egress**
-```
-Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (static EIP)] → partner/exchange
-```
-- Static egress IP for partner/exchange source-IP allowlisting: `layer0/00-network` output `nat_public_ips`
-- Egress filtering: `layer1/07-network-policy`
-- Centralized inspection: `layer0/00-network` (`enable_network_firewall` — dedicated firewall subnets + app-egress redirect) or Istio egress in `layer2/06-service-mesh`
+**ALB vs NLB, egress options, VPC endpoints, subnet tiers — full design guide:
+[`docs/NETWORKING.md`](docs/NETWORKING.md).**
 
 ## Conventions
 

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-server
+  labels:
+    app.kubernetes.io/name: grpc-server
+spec:
+  # 3 replicas so you can observe which backend the client's (single, long-lived)
+  # gRPC connection lands on through the Service.
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grpc-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grpc-server
+    spec:
+      containers:
+        - name: server
+          image: grpc-server # rewritten by kustomize (CI sets the tag)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+          env:
+            - name: LISTEN_ADDR
+              value: ":50051"
+            # Downward API: report the real pod IP so the client log can tell
+            # apart the ClusterIP VIP from the actual backend it landed on.
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Uncomment for gRPC-internal transport/keepalive tracing:
+            # - name: GRPC_GO_LOG_SEVERITY_LEVEL
+            #   value: "info"
+            # - name: GRPC_GO_LOG_VERBOSITY_LEVEL
+            #   value: "2"
+          readinessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532 # distroless :nonroot uid — numeric so kubelet can verify non-root
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
