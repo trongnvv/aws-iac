@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
     bucket       = "eks-iac-tfstate"
-    key          = "prod/layer0/06-observability-aws/terraform.tfstate"
+    key          = "prod/layer0/06-backup-aws/terraform.tfstate"
     region       = "ap-southeast-1"
     use_lockfile = true
     encrypt      = true
@@ -26,13 +26,13 @@ data "terraform_remote_state" "eks" {
   }
 }
 
-module "observability_aws" {
-  source       = "../../../modules/observability-aws"
-  env          = "prod"
-  region       = "ap-southeast-1"
-  cluster_name = data.terraform_remote_state.eks.outputs.cluster_name
-  enable_amp   = true
+module "backup_aws" {
+  source        = "../../../modules/backup-aws"
+  env           = "prod"
+  region        = "ap-southeast-1"
+  cluster_name  = data.terraform_remote_state.eks.outputs.cluster_name
+  enable_backup = true
 }
 
-output "amp_workspace_arn" { value = module.observability_aws.amp_workspace_arn }
-output "amp_remote_write_url" { value = module.observability_aws.amp_remote_write_url }
+output "velero_bucket" { value = module.backup_aws.velero_bucket }
+output "velero_role_arn" { value = module.backup_aws.velero_role_arn }

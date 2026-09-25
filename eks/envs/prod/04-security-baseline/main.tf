@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
     bucket       = "eks-iac-tfstate"
-    key          = "prod/layer0/05-security-baseline/terraform.tfstate"
+    key          = "prod/layer0/04-security-baseline/terraform.tfstate"
     region       = "ap-southeast-1"
     use_lockfile = true
     encrypt      = true

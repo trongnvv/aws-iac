@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
     bucket       = "eks-iac-tfstate"
-    key          = "dev/layer0/05-security-baseline/terraform.tfstate"
+    key          = "dev/layer0/07-waf/terraform.tfstate"
     region       = "ap-southeast-1"
     use_lockfile = true
     encrypt      = true
@@ -17,9 +17,10 @@ provider "aws" {
   profile = "default"
 }
 
-# Account-level security singletons stay OFF in dev — prod owns them (one per account).
-module "security_baseline" {
-  source = "../../../modules/security-baseline"
+module "waf" {
+  source = "../../../modules/waf"
   env    = "dev"
   region = "ap-southeast-1"
 }
+
+output "web_acl_arn" { value = module.waf.web_acl_arn }

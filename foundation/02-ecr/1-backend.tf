@@ -1,27 +1,22 @@
 terraform {
   required_version = ">= 1.9.0"
+
   backend "s3" {
     bucket       = "eks-iac-tfstate"
-    key          = "prod/layer0/08-waf/terraform.tfstate"
+    key          = "foundation/ecr/terraform.tfstate"
     region       = "ap-southeast-1"
     use_lockfile = true
     encrypt      = true
   }
+
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
 }
 
 provider "aws" {
-  region  = "ap-southeast-1"
-  profile = "default"
+  region  = var.region
+  profile = var.profile
 }
 
-module "waf" {
-  source     = "../../../modules/waf"
-  env        = "prod"
-  region     = "ap-southeast-1"
-  enable_waf = true
-}
-
-output "web_acl_arn" { value = module.waf.web_acl_arn }
+data "aws_caller_identity" "current" {}

@@ -26,7 +26,7 @@ Each env is a set of **per-layer roots** that call `../../../modules/*`:
 | `envs/<env>/config.env` | helmfile-only: `ACME_EMAIL`/`DOMAIN_FILTER` + the `L1`/`L2` add-on lists + `NETPOL` |
 
 Modules are shared in `modules/`; only the roots differ per env. State bucket is shared
-(`eks-iac-tfstate`); the **key** is `<env>`-prefixed. Global names (buckets, WAF, ECR)
+(`eks-iac-tfstate`); the **key** is `<env>`-prefixed. Global names (buckets, WAF)
 are `<env>`-prefixed inside the modules; cluster name is per env.
 
 **Add a new system:** `cp -r envs/dev envs/staging`, edit each root's `main.tf`

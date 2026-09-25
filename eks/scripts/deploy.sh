@@ -11,7 +11,8 @@ ENVDIR="envs/$ENV"
 REGION=ap-southeast-1
 source "$ENVDIR/config.env"
 
-LAYER0="00-network 01-eks 02-karpenter-infra 03-addon-iam 04-ecr 05-security-baseline 06-observability-aws 07-backup-aws 08-waf"
+# ECR is shared (foundation/02-ecr), not per-env — run `foundation/apply.sh` first.
+LAYER0="00-network 01-eks 02-karpenter-infra 03-addon-iam 04-security-baseline 05-observability-aws 06-backup-aws 07-waf"
 
 echo "== layer0 · env=$ENV =="
 for d in $LAYER0; do
@@ -26,7 +27,7 @@ export KARPENTER_QUEUE_NAME=$(cd "$ENVDIR/02-karpenter-infra" && tofu output -ra
 export KARPENTER_NODE_ROLE=$(cd "$ENVDIR/02-karpenter-infra" && tofu output -raw karpenter_node_iam_role_name)
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 kubectl apply -f manifests/gp3-default-storageclass.yaml   # default StorageClass (EBS CSI)
-echo "${L2:-}" | grep -q velero && export BACKUP_BUCKET=$(cd "$ENVDIR/07-backup-aws" && tofu output -raw velero_bucket)
+echo "${L2:-}" | grep -q velero && export BACKUP_BUCKET=$(cd "$ENVDIR/06-backup-aws" && tofu output -raw velero_bucket)
 echo "${L1:-}" | grep -q 09-dns-scale && export DNS_CLUSTER_IP=$(kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}')
 
 echo "== layer1 =="

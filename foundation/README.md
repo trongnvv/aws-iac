@@ -7,6 +7,7 @@ Account-level, long-lived, shared across every stack (eks and beyond). Set up
 |---|---|---|---|
 | 00 | tf-backend | S3 state bucket (native S3 locking, `use_lockfile`) — creates the backend | local |
 | 01 | dns | Route 53 hosted zone + regional wildcard ACM cert | S3 |
+| 02 | ecr | shared image registry — build once, promote same digest across envs | S3 |
 
 ## Apply (once)
 ```bash

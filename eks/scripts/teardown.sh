@@ -21,7 +21,7 @@ kubectl delete -f layer1-addons/07-network-policy/manifests.yaml 2>/dev/null || 
 for d in ${L1:-}; do [ -f "layer1-addons/$d/helmfile.yaml" ] && ( cd "layer1-addons/$d" && helmfile destroy 2>/dev/null ) || true; done
 
 echo "== layer0 (reverse) =="
-for d in 08-waf 07-backup-aws 06-observability-aws 05-security-baseline 04-ecr 03-addon-iam 02-karpenter-infra 01-eks 00-network; do
+for d in 07-waf 06-backup-aws 05-observability-aws 04-security-baseline 03-addon-iam 02-karpenter-infra 01-eks 00-network; do
   ( cd "$ENVDIR/$d" && tofu init >/dev/null 2>&1 && tofu destroy -auto-approve 2>/dev/null ) || true
 done
 

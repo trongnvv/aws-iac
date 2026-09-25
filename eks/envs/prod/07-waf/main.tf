@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.9.0"
   backend "s3" {
     bucket       = "eks-iac-tfstate"
-    key          = "dev/layer0/04-ecr/terraform.tfstate"
+    key          = "prod/layer0/07-waf/terraform.tfstate"
     region       = "ap-southeast-1"
     use_lockfile = true
     encrypt      = true
@@ -17,10 +17,11 @@ provider "aws" {
   profile = "default"
 }
 
-module "ecr" {
-  source = "../../../modules/ecr"
-  env    = "dev"
-  region = "ap-southeast-1"
+module "waf" {
+  source     = "../../../modules/waf"
+  env        = "prod"
+  region     = "ap-southeast-1"
+  enable_waf = true
 }
 
-output "repository_urls" { value = module.ecr.repository_urls }
+output "web_acl_arn" { value = module.waf.web_acl_arn }

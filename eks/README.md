@@ -24,8 +24,8 @@ New here? Read this file top-to-bottom once, then follow `docs/DEPLOY.md`.
 
 | Part | Tool | What |
 |---|---|---|
-| `../foundation/` | OpenTofu | shared prereqs (run once): S3 state backend + Route 53 zone + ACM cert |
-| `modules/` | OpenTofu | **reusable building blocks**: network · eks · karpenter-infra · addon-iam · ecr · security-baseline · observability-aws · backup-aws · waf |
+| `../foundation/` | OpenTofu | shared prereqs (run once): S3 state backend + Route 53 zone + ACM cert + **shared ECR** |
+| `modules/` | OpenTofu | **reusable building blocks**: network · eks · karpenter-infra · addon-iam · security-baseline · observability-aws · backup-aws · waf |
 | `envs/<env>/<NN-layer>/` | OpenTofu | **thin per-env roots** that call the modules; own S3 state (key `<env>/layer0/<layer>`), env-specific values inline |
 | `layer1-addons/` | Helmfile | core cluster add-ons (autoscaling, ingress, DNS, certs, secrets, policy) |
 | `layer2-platform/` | Helmfile | platform & apps (GitOps, observability, backup, delivery, mesh, security) |

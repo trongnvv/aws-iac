@@ -9,7 +9,6 @@ Reusable OpenTofu building blocks. Each is pure — inputs → resources → out
 | `eks` | cluster, managed add-ons, Access Entries, bootstrap node group | cluster_name, oidc_provider_arn, node_security_group_id |
 | `karpenter-infra` | node IAM role, instance profile, SQS interruption queue | karpenter_queue_name, karpenter_node_iam_role_name |
 | `addon-iam` | Pod Identity roles: LBC, ESO, external-dns, KEDA, cert-manager, kubecost | *_role_arn |
-| `ecr` | private registry + image scanning | repository_urls |
 | `security-baseline` | GuardDuty, CloudTrail, Config, Security Hub (account-level singletons) | — |
 | `observability-aws` | Amazon Managed Prometheus workspace + IAM | amp_workspace_arn, amp_remote_write_url |
 | `backup-aws` | Velero S3 bucket + IAM | velero_bucket, velero_role_arn |
