@@ -7,13 +7,18 @@ lab/spike, not part of the base layer build.
   (ALB Controller / Istio ingress) against Gateway API; test both a RESTful
   service and a gRPC service through each, including the L4-vs-L7 gRPC
   load-balancing gotcha already documented in `../ad-hoc/grpc-conn-debug/`.
-- [ ] **Observability — AWS-native.** AMP + AMG (`06-observability-aws`),
-  Prometheus `remoteWrite` into AMP, dashboards in AMG.
+  → `hands-on/TEST-INGRESS-GATEWAY-API.md`
+- [ ] **Observability — AWS-native.** AMP (`05-observability-aws`), an ADOT
+  collector `remoteWrite`-ing into it, dashboards in AMG.
+  → `hands-on/TEST-OBSERVABILITY-AWS-NATIVE.md`
 - [ ] **Observability — Grafana stack (self-hosted).** kube-prometheus-stack
   (layer2/01) with durable storage (gp3 PVC), Grafana + Loki/Tempo if in scope.
-- [ ] **CI/CD — AWS-native.** e.g. CodePipeline/CodeBuild (or ArgoCD sourcing
-  from CodeCommit-equivalent) deploying into the cluster.
-- [ ] **CI/CD — GitLab.** GitLab CI runner on the cluster (or GitLab-managed
-  runner) + ArgoCD GitOps pull, deploying into the cluster.
+  → `hands-on/TEST-OBSERVABILITY-GRAFANA-STACK.md`
+- [ ] **CI/CD — AWS-native.** CodeBuild building + pushing to the shared ECR,
+  ArgoCD GitOps pull deploying into the cluster.
+  → `hands-on/TEST-CICD-AWS-NATIVE.md`
+- [ ] **CI/CD — GitLab.** GitLab CI runner on the cluster pushing to the shared
+  ECR, same ArgoCD GitOps pull deploying into the cluster.
+  → `hands-on/TEST-CICD-GITLAB.md`
 
 Add more rows here as new test ideas come up — this list is expected to grow.
