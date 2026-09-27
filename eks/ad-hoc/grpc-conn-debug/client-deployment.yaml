@@ -28,7 +28,7 @@ spec:
             #   Case 2: SERVER_ADDR=dns:///grpc-server-headless.grpc-debug.svc.cluster.local:50051, LB_POLICY=pick_first
             #   Case 3: (headless, as above) + LB_POLICY=round_robin
             #   Case 4: keep these Case-1 values, put it behind a service mesh
-            #           (Istio, layer2/06) so an L7 proxy load-balances per-RPC
+            #           (Kuma, layer2/06) so an L7 proxy load-balances per-RPC
             - name: SERVER_ADDR
               value: "grpc-server.grpc-debug.svc.cluster.local:50051"
               # value: "grpc-server-headless.grpc-debug.svc.cluster.local:50051"

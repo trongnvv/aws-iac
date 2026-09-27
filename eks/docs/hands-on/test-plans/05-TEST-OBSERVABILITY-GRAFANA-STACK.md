@@ -27,7 +27,7 @@ pod panels populate (proves the `kube-state-metrics` + node-exporter subcharts a
 scraping).
 
 ## 3. Generate load to see it move
-Reuse the REST demo from `TEST-INGRESS-GATEWAY-API.md` §1 (or any pod):
+Reuse the REST demo from `01-TEST-INGRESS-GATEWAY-API.md` §1 (or any pod):
 ```bash
 kubectl run load --image=williamyeh/hey --restart=Never --rm -it -- \
   -z 60s -c 20 http://whoami.default.svc.cluster.local

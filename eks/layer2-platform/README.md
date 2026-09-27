@@ -10,7 +10,7 @@ Higher-level platform services on top of the core add-ons. Run after layer1.
 | 03 | argo-rollouts | progressive delivery (canary/blue-green) | — |
 | 04 | kubecost | cost visibility per namespace/workload | kubecost IAM (04) |
 | 05 | api-gateway | Kong — API auth / rate-limit / quota | — |
-| 06 | service-mesh | Istio — mTLS, traffic management | — |
+| 06 | service-mesh | Kuma (Kong's OSS mesh) — mTLS, traffic management | — |
 | 07 | falco | runtime security (syscall detection) | — |
 
 Each folder: `helmfile apply`.

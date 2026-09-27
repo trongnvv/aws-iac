@@ -60,10 +60,10 @@ Add a new system: `cp -r envs/dev envs/<name>`, edit the roots' `main.tf` (env n
 
 ```
 Inbound:  Internet → [CloudFront → WAF] → [ALB (L7) / NLB (L4), LBC] → [API GW (Kong)] → Service
-Outbound: Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (static EIP)] → partner
+Outbound: Service → [NetworkPolicy] → [Network Firewall / Kuma egress] → [NAT (static EIP)] → partner
 ```
 - Inbound: `layer1/02-lb-controller` (ALB *and* NLB) · `03-external-dns` · `04-cert-manager` · WAF `layer0/08` · Kong `layer2/05`.
-- Outbound: static egress IP = `00-network` output `nat_public_ips` · filtering `layer1/07` · inspection `enable_network_firewall` / Istio egress.
+- Outbound: static egress IP = `00-network` output `nat_public_ips` · filtering `layer1/07` · inspection `enable_network_firewall` / Kuma egress.
 
 **ALB vs NLB, egress options, VPC endpoints, subnet tiers — full design guide:
 [`docs/NETWORKING.md`](docs/NETWORKING.md).**
@@ -97,7 +97,7 @@ Outbound: Service → [NetworkPolicy] → [Network Firewall / Istio egress] → 
 - Kyverno
 - KEDA
 - ArgoCD
-- Istio
+- Kuma
 - Velero
 - Kubecost
 - Falco
@@ -114,8 +114,11 @@ Some add-ons overlap — pick one per cluster:
   ships only NodeLocal DNSCache.
 - **Metrics backend:** self-host `kube-prometheus-stack` (layer2/01) **or** AMP+AMG
   (`06-observability-aws`) — not both. If using AMP, point Prometheus `remoteWrite` at it.
-- **North-south API:** Kong (layer2/05) **or** Istio ingress (layer2/06) — Istio's
-  value here is east-west mTLS; don't run both as the API gateway.
+- **North-south API:** Kong (`layer2/05`) has two modes — classic reverse-proxy behind
+  the ALB, or Gateway API/ingress-controller (unmanaged `GatewayClass`, reusing the
+  same proxy Service — no new LB) — pick one style per route, don't run both for the
+  same workload. Kuma (`layer2/06`) is east-west only (mesh mTLS) and never overlaps
+  here.
 - **Runtime security:** Falco (layer2/07) **or** GuardDuty runtime monitoring — not both.
 - **Storage:** EBS CSI is a managed add-on (`enable_ebs_csi`, on by default) + a `gp3`
   default StorageClass (`ad-hoc/gp3-default-storageclass.yaml`, applied by deploy.sh).

@@ -3,7 +3,7 @@
 No layer in this repo builds images or runs pipelines yet — this test adds the
 **CI** half by hand (CodeBuild) and reuses the **CD** half that already exists
 (ArgoCD, `layer2-platform/00-argocd`). GitOps stays the deploy mechanism in both
-this test and `TEST-CICD-GITLAB.md`; only the CI engine differs — that split is
+this test and `04-TEST-CICD-GITLAB.md`; only the CI engine differs — that split is
 itself the thing worth observing.
 
 ## 0. Prereqs

@@ -1,20 +1,16 @@
-# Istio — service mesh (mTLS between services, traffic management, telemetry).
+# Kuma — service mesh (mTLS between services, traffic management, telemetry).
+# Open-source (CNCF), built by Kong — Kong Mesh (paid, enterprise) is the same control
+# plane with a support wrapper. Kong has no free mesh product of its own, so this is
+# the honest free equivalent. East-west only — north-south ingress/API gateway duty
+# stays with Kong Gateway (`layer2/05-api-gateway`); the two never overlap.
 repositories:
-  - name: istio
-    url: https://istio-release.storage.googleapis.com/charts
+  - name: kuma
+    url: https://kumahq.github.io/charts
 
 releases:
-  - name: istio-base
-    namespace: istio-system
+  - name: kuma
+    namespace: kuma-system
     createNamespace: true
-    chart: istio/base
-    version: "1.24.1"
+    chart: kuma/kuma
+    version: "2.14.5"
     wait: true
-
-  - name: istiod
-    namespace: istio-system
-    chart: istio/istiod
-    version: "1.24.1"
-    wait: true
-    needs:
-      - istio-system/istio-base

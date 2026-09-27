@@ -3,6 +3,8 @@
 # Reverse order; guards skip what wasn't applied. Removes the LB controller
 # (and its ALBs/ENIs) before the VPC.
 set -uo pipefail
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.cache/tofu-plugin-cache}"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
 cd "$(dirname "$0")/.."
 ENV="${1:?usage: teardown.sh <env>}"
 ENVDIR="envs/$ENV"

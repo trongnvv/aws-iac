@@ -10,7 +10,7 @@ are done; what remains is Medium/Low hardening.
 - **Network Firewall done right.** Folded into `00-network` with dedicated
   firewall subnets + app-egress redirect (app → firewall endpoint → NAT), gated by
   `enable_network_firewall`. (was High #2)
-- **Chart versions verified.** All 17 pinned Helm charts (incl. istio + the two OCI
+- **Chart versions verified.** All 16 pinned Helm charts (incl. kuma + the two OCI
   charts) exist at the pinned version. (was High #3)
 - **Redundancy trimmed.** Removed 13 duplicate per-folder READMEs (kept the 3 layer
   READMEs + bootstrap); removed the empty `02-node-group` placeholder and renumbered
@@ -29,6 +29,8 @@ are done; what remains is Medium/Low hardening.
    ACM for ALB-terminated TLS; HTTP-01 suits ingress-nginx.
 6. **Secondary CIDR** is created but unused until the in-cluster `ENIConfig` (custom
    networking) is applied and `AWS_VPC_K8S_CNI_CUSTOM_NETWORK_CFG=true`.
+7. **Kong's Gateway API mode (unmanaged `GatewayClass`) and Kuma haven't been run
+   yet** — first real exercise is `docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`.
 
 ## Correctness — Low
 - System node group untainted — add `CriticalAddonsOnly` + tolerations.

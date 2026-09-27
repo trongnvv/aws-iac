@@ -4,6 +4,8 @@
 # Roots have concrete S3 backends (key prefixed by env), so `tofu init` just works.
 # Prereq: run ../foundation/apply.sh once (state backend + DNS).
 set -euo pipefail
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.cache/tofu-plugin-cache}"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"   # shared across every root here — same aws/http provider version everywhere
 cd "$(dirname "$0")/.."
 ENV="${1:?usage: deploy.sh <env>   (dir must exist under envs/)}"
 ENVDIR="envs/$ENV"
@@ -30,11 +32,11 @@ kubectl apply -f ad-hoc/gp3-default-storageclass.yaml   # default StorageClass (
 echo "${L2:-}" | grep -q velero && export BACKUP_BUCKET=$(cd "$ENVDIR/06-backup-aws" && tofu output -raw velero_bucket)
 echo "${L1:-}" | grep -q 09-dns-scale && export DNS_CLUSTER_IP=$(kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}')
 
-echo "== layer1 =="
-for d in ${L1:-}; do ( cd "layer1-addons/$d" && helmfile apply ); done
-[ "${NETPOL:-0}" = "1" ] && kubectl apply -f layer1-addons/07-network-policy/manifests.yaml
+# echo "== layer1 =="
+# for d in ${L1:-}; do ( cd "layer1-addons/$d" && helmfile apply ); done
+# [ "${NETPOL:-0}" = "1" ] && kubectl apply -f layer1-addons/07-network-policy/manifests.yaml
 
-echo "== layer2 =="
-for d in ${L2:-}; do ( cd "layer2-platform/$d" && helmfile apply ); done
+# echo "== layer2 =="
+# for d in ${L2:-}; do ( cd "layer2-platform/$d" && helmfile apply ); done
 
-echo "== done: $ENV =="
+# echo "== done: $ENV =="

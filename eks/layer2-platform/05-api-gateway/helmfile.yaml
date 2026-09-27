@@ -1,5 +1,11 @@
-# Kong — API gateway (auth, rate-limit, quota, key management) in front of services.
-# Alternative to AWS API Gateway; runs in-cluster, fronted by the ALB.
+# Kong — API gateway (auth, rate-limit, quota, key management) AND north-south
+# ingress / Gateway API entry point (Kong Ingress Controller ships in the same pod,
+# `ingressController.enabled` is the chart default). Two ingress styles, pick one per
+# route — see docs/NETWORKING.md §1 and docs/hands-on/TEST-INGRESS-GATEWAY-API.md:
+#   - classic reverse-proxy: Kong's proxy Service sits behind the ALB (LBC), same
+#     pattern as any other Ingress-fronted service.
+#   - Gateway API (unmanaged GatewayClass): `Gateway`/`HTTPRoute`/`GRPCRoute` land on
+#     this same proxy Service — no new LB provisioned (unlike Istio's own gateway).
 repositories:
   - name: kong
     url: https://charts.konghq.com
@@ -11,3 +17,8 @@ releases:
     chart: kong/kong
     version: "2.46.0"
     wait: true
+    values:
+      - ingressController:
+          enabled: true
+          gatewayDiscovery:
+            enabled: false   # unmanaged mode — Gateway API routes reuse this proxy, no per-Gateway LB

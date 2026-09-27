@@ -163,7 +163,7 @@ flowchart TB
         direction LR
         nodes["nodes / pods"]:::eks
         l1["<b>layer1</b><br/>karpenter · LBC · external-dns · cert-manager<br/>external-secrets · kyverno · keda · dns-scale · netpol · metrics-server"]:::add
-        l2["<b>layer2</b><br/>argocd · kube-prometheus · velero<br/>argo-rollouts · kubecost · Kong · Istio mTLS · Falco"]:::add
+        l2["<b>layer2</b><br/>argocd · kube-prometheus · velero<br/>argo-rollouts · kubecost · Kong · Kuma mTLS · Falco"]:::add
       end
       subgraph iso["private-isolated subnets · NO internet route"]
         isod["reserved: RDS · ElastiCache<br/>(separate stack)"]:::iso

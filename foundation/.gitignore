@@ -1,5 +1,5 @@
 .terraform/
-.terraform.lock.hcl
+# .terraform.lock.hcl committed — pins exact provider version, avoids re-resolving on init
 *.tfstate
 *.tfstate.*
 *.tfvars

@@ -63,8 +63,10 @@ skipping the node-port hop.
 - **Gateway API** — the successor to `Ingress` (LBC supports it); role-split `Gateway` +
   `HTTPRoute`, cleaner for multi-team clusters.
 - **CloudFront + WAF/Shield** — CDN/edge cache + DDoS, global entry (not yet in IaC).
-- **Istio ingress gateway** (`layer2/06`) — if running the mesh, its gateway can be the
-  north-south entry (mTLS, edge canary). Overlaps LBC — pick one as *the* gateway.
+- **Kong Gateway API mode** (`layer2/05`) — the same Kong release can also act as a
+  Gateway API implementation (unmanaged `GatewayClass: kong`, reusing the existing
+  proxy Service — no new LB). Overlaps LBC — pick one as *the* gateway (classic
+  `Ingress` via LBC, or `Gateway`/`HTTPRoute` via Kong).
 - **AWS Global Accelerator** — anycast static IPs + cross-region failover in front of NLB/ALB.
 - **VPC Lattice** — service-to-service networking across VPCs/accounts without a per-service LB.
 - **Internal ALB/NLB (`scheme=internal`) + PrivateLink** — internal-only apps / expose to
@@ -75,7 +77,7 @@ skipping the node-port hop.
 ## 2. Outbound (north-south out / egress)
 
 ```
-Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (static EIP)] → partner/exchange
+Service → [NetworkPolicy] → [Network Firewall / Kuma zone egress] → [NAT (static EIP)] → partner/exchange
 ```
 
 - **Static egress IP** for partner/exchange source-IP allowlisting: `layer0/00-network`
@@ -84,7 +86,7 @@ Service → [NetworkPolicy] → [Network Firewall / Istio egress] → [NAT (stat
 - **Centralized L7 inspection:** two mutually-exclusive options —
   - **AWS Network Firewall** (`enable_network_firewall` in `00-network`) — dedicated firewall
     subnets + app-egress route redirect; domain/FQDN allowlists, IPS. **~$865/mo** — prod only.
-  - **Istio egress gateway** (`layer2/06`) — if the mesh is already in place; policy in-cluster.
+  - **Kuma zone egress** (`layer2/06`) — if the mesh is already in place; policy in-cluster.
 - **Skip the NAT for AWS APIs:** VPC endpoints (§4) route ECR/S3/Secrets Manager privately —
   cheaper and works on a fully private cluster.
 

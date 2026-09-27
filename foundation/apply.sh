@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # One-time foundation setup: state backend, then DNS zone + ACM cert.
 set -euo pipefail
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.cache/tofu-plugin-cache}"
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
 cd "$(dirname "$0")"
 (cd 00-tf-backend && tofu init && tofu apply -auto-approve)
 (cd 01-dns && tofu init && tofu apply -auto-approve)
