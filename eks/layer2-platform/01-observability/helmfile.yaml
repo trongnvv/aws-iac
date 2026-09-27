@@ -11,5 +11,5 @@ releases:
     namespace: monitoring
     createNamespace: true
     chart: prometheus-community/kube-prometheus-stack
-    version: "65.5.0"
+    version: "91.7.0"
     wait: true

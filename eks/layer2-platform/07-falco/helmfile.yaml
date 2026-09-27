@@ -8,5 +8,5 @@ releases:
     namespace: falco
     createNamespace: true
     chart: falcosecurity/falco
-    version: "4.20.0"
+    version: "9.2.0"
     wait: true

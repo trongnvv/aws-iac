@@ -8,5 +8,5 @@ releases:
     namespace: kubecost
     createNamespace: true
     chart: kubecost/cost-analyzer
-    version: "2.5.3"
+    version: "2.9.7"
     wait: true

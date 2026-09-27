@@ -9,7 +9,7 @@ releases:
     namespace: velero
     createNamespace: true
     chart: vmware-tanzu/velero
-    version: "8.2.0"
+    version: "12.2.0"
     wait: true
     values:
       - values/values.yaml.gotmpl

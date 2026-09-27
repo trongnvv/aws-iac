@@ -9,7 +9,7 @@ releases:
     namespace: keda
     createNamespace: true
     chart: kedacore/keda
-    version: "2.16.0"
+    version: "2.21.0"
     wait: true
     values:
       - serviceAccount:

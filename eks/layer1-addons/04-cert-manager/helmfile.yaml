@@ -9,7 +9,7 @@ releases:
     namespace: cert-manager
     createNamespace: true
     chart: jetstack/cert-manager
-    version: "v1.16.2"
+    version: "v1.21.1"
     wait: true
     values:
       - crds:

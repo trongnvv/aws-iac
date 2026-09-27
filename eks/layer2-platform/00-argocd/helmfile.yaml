@@ -8,5 +8,5 @@ releases:
     namespace: argocd
     createNamespace: true
     chart: argo/argo-cd
-    version: "7.7.7"
+    version: "10.9.2"
     wait: true

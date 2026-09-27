@@ -9,7 +9,7 @@ releases:
     namespace: external-dns
     createNamespace: true
     chart: external-dns/external-dns
-    version: "1.15.0"
+    version: "1.22.0"
     wait: true
     values:
       - values/values.yaml.gotmpl

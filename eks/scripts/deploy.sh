@@ -4,8 +4,9 @@
 # Roots have concrete S3 backends (key prefixed by env), so `tofu init` just works.
 # Prereq: run ../foundation/apply.sh once (state backend + DNS).
 set -euo pipefail
-export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.cache/tofu-plugin-cache}"
+export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
 mkdir -p "$TF_PLUGIN_CACHE_DIR"   # shared across every root here — same aws/http provider version everywhere
+export GODEBUG="${GODEBUG:+$GODEBUG,}http2client=0"   # tofu's HTTP/2 provider downloads from GitHub CDN intermittently stall at ~160KB/s
 cd "$(dirname "$0")/.."
 ENV="${1:?usage: deploy.sh <env>   (dir must exist under envs/)}"
 ENVDIR="envs/$ENV"

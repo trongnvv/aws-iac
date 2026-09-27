@@ -11,7 +11,7 @@ variable "cluster_name" {
 }
 
 variable "cluster_version" {
-  default = "1.32"
+  default = "1.35"
 }
 
 # API endpoint access — toggle per env. Public on = lab-friendly; a locked-down
