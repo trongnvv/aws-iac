@@ -1,6 +1,6 @@
 # IAM for the EBS CSI driver managed add-on, via EKS Pod Identity.
 # Gives dynamic block storage (gp3 PVCs). The gp3 default StorageClass itself is a
-# k8s object applied post-cluster (ad-hoc/gp3-default-storageclass.yaml).
+# k8s object shipped as a helm release (envs/<env>/01-addons/00-storageclass).
 resource "aws_iam_role" "ebs_csi" {
   count = var.enable_ebs_csi ? 1 : 0
   name  = "${var.cluster_name}-ebs-csi"

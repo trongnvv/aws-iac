@@ -51,6 +51,46 @@ skipping the node-port hop.
 > **Finance/exchange workloads** (FIX, market-data feeds): **NLB** is usually the edge —
 > low latency, static EIP for exchange allowlisting, and preserved source IP.
 
+### Two ingress models — and the hybrid we run
+
+On EKS the "ingress controller" role can be filled two ways:
+
+**A · AWS LBC + ALB** — the controller is *control-plane only*: it watches `Ingress`
+(class `alb`) and programs a real, AWS-managed ALB. Traffic goes **straight to pod IPs**,
+the controller is **not** in the data path.
+```
+Internet → ALB (AWS-managed, public subnet) → pod IP        [2 hops]
+              ▲ LBC programs it (control-plane)
+```
+
+**B · In-cluster proxy (Kong / ingress-nginx)** — the controller **is** the data-plane:
+a proxy pod terminates + routes. It sits behind one LB shared by many routes.
+```
+Internet → NLB/ALB ×1 → proxy pod (Kong/nginx) → ClusterIP → pod   [3 hops]
+                           ▲ controller = the proxy itself
+```
+
+| | A · LBC + ALB | B · in-cluster proxy |
+|---|---|---|
+| Controller | control-plane (programs ALB) | data-plane (proxy pods) |
+| LB count | 1 ALB per `Ingress` (`group.name` to share) | 1 LB → many routes |
+| TLS / WAF | ACM + AWS WAF on the ALB | in-cluster cert + own WAF |
+| L7 features | host/path only | auth, rate-limit, transform, plugins |
+| Scaling / cost | AWS-managed, $/ALB | you scale pods, 1 LB |
+| Portability | AWS-locked | any k8s |
+
+**Hybrid (what this platform runs):** plain `Ingress` uses model A (cheap, simple). When a
+route needs API-gateway features or Gateway API, Kong (`envs/prod/02-platform/05-api-gateway`)
+is used — but **Kong's own proxy Service is fronted by an ALB (LBC)**, so the two models
+chain:
+```
+Internet → ALB (LBC) → Kong proxy pod → Service → pod
+           └ model A ┘  └───────── model B ─────────┘
+           TLS/WAF edge   auth · rate-limit · Gateway API (GRPCRoute/HTTPRoute)
+```
+Rule of thumb: **model A for normal ingress; add Kong (model B behind the ALB) only for
+routes that need gateway logic.** Don't run both as *the* gateway for the same route.
+
 **Supporting components:**
 - **DNS:** external-dns (`envs/prod/01-addons/03-external-dns`) → Route 53 records.
 - **TLS:** cert-manager (`envs/<env>/01-addons/04-cert-manager`) → ACM / Let's Encrypt.

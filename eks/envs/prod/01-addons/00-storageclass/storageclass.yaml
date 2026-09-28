@@ -1,0 +1,15 @@
+# Default StorageClass backed by the EBS CSI driver. If a legacy `gp2` default exists,
+# patch it to non-default to avoid two defaults.
+customValues:
+  - apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: gp3
+      annotations:
+        storageclass.kubernetes.io/is-default-class: "true"
+    provisioner: ebs.csi.aws.com
+    volumeBindingMode: WaitForFirstConsumer
+    allowVolumeExpansion: true
+    parameters:
+      type: gp3
+      encrypted: "true"

@@ -1,0 +1,9 @@
+# Default gp3 StorageClass (EBS CSI), rendered via the shared charts/app chart.
+# Cluster-scoped; must exist before any PVC consumer (e.g. kube-prometheus in
+# 02-platform). Foundational tier alongside karpenter — order between them is irrelevant.
+releases:
+  - name: storageclass-gp3
+    namespace: kube-system
+    chart: ../../../../charts/app
+    values:
+      - storageclass.yaml

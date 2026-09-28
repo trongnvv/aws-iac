@@ -130,7 +130,7 @@ Some add-ons overlap — pick one per cluster:
 - **Runtime security:** Falco (`02-platform/07-falco`) **or** GuardDuty runtime
   monitoring — not both.
 - **Storage:** EBS CSI is a managed add-on (`enable_ebs_csi`, on by default) + a `gp3`
-  default StorageClass (`ad-hoc/gp3-default-storageclass.yaml`, applied by deploy.sh).
+  default StorageClass (`01-addons/00-storageclass`, a helmfile release via charts/app).
   Don't also enable the standalone metrics-server managed add-on (installed via Helm).
 
 ## Teardown

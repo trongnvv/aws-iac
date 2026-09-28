@@ -42,7 +42,6 @@ fi
 if run 01-addons || run 02-platform || run 03-application; then
   echo "== wire kubeconfig =="
   aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
-  kubectl apply -f ../../ad-hoc/gp3-default-storageclass.yaml   # default StorageClass (EBS CSI)
 fi
 
 if run 01-addons; then
