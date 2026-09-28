@@ -1,13 +1,16 @@
 # gRPC server release (charts/app). Release name = grpc-server -> pods/Services get
 # label app.kubernetes.io/name=grpc-server. 3 replicas so you can watch which backend
 # the client's single long-lived connection lands on.
+# `port` (name/number/appProtocol) drives the container port, both Services' ports, and
+# the auto gRPC health probe. Probes, resources and securityContext come from chart defaults.
 # Set the ECR account id once:
 #   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" server.yaml
 image: "ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/server:v1"
 replicas: 3
-containerPorts:
-  - name: grpc
-    containerPort: 50051
+port:
+  name: grpc
+  number: 50051
+  appProtocol: grpc   # -> gRPC probe + Service appProtocol=grpc
 env:
   - name: LISTEN_ADDR
     value: ":50051"
@@ -17,45 +20,29 @@ env:
     valueFrom:
       fieldRef:
         fieldPath: status.podIP
-readinessProbe:
-  grpc:
-    port: 50051
-  initialDelaySeconds: 3
-  periodSeconds: 5
-livenessProbe:
-  grpc:
-    port: 50051
-  initialDelaySeconds: 5
-  periodSeconds: 10
-resources:
-  requests:
-    cpu: 25m
-    memory: 32Mi
-  limits:
-    memory: 128Mi
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 65532 # distroless :nonroot uid — numeric so kubelet can verify non-root
-  runAsGroup: 65532
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop: ["ALL"]
 services:
   # ClusterIP — one virtual IP; L4 pins gRPC's single HTTP/2 conn to one backend.
+  # port omitted -> derived from `port` (50051 / targetPort grpc / appProtocol grpc).
   - name: grpc-server
-    type: ClusterIP
-    ports:
-      - name: grpc
-        port: 50051
-        targetPort: grpc
-        appProtocol: grpc
   # Headless — DNS returns every pod IP; use with client LB_POLICY=round_robin.
   - name: grpc-server-headless
-    type: ClusterIP
     clusterIP: None
-    ports:
-      - name: grpc
-        port: 50051
-        targetPort: grpc
-        appProtocol: grpc
+
+# Optional — expose gRPC externally via Kong Gateway API (needs Gateway API CRDs v1.3
+# + Kong, 02-platform/05). Then Kong L7-load-balances per-RPC across all 3 backends
+# (the "case 4" fix) instead of the L4 ClusterIP pin. Uncomment to enable:
+# gateway:
+#   enabled: true
+#   gatewayClassName: kong
+#   annotations:
+#     konghq.com/gatewayclass-unmanaged: "true"
+#   listeners:
+#     - name: grpc
+#       protocol: HTTP        # Kong terminates; use HTTPS + a cert for real traffic
+#       port: 50051
+#       allowedRoutes: {namespaces: {from: Same}}
+# grpcRoute:
+#   enabled: true
+#   parentRefs:
+#     - {name: grpc-server}
+#   # servicePort omitted -> from `port` (50051)

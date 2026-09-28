@@ -31,21 +31,35 @@ spec:
           args:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.containerPorts }}
+          {{- if .Values.containerPorts }}
           ports:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml .Values.containerPorts | nindent 12 }}
+          {{- else if .Values.port.number }}
+          ports:
+            - name: {{ .Values.port.name }}
+              containerPort: {{ .Values.port.number }}
           {{- end }}
           {{- with .Values.env }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.readinessProbe }}
+          {{- if .Values.readinessProbe }}
           readinessProbe:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- else if .Values.port.number }}
+          readinessProbe:
+            {{- include "app.probe" . | nindent 12 }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
           {{- end }}
-          {{- with .Values.livenessProbe }}
+          {{- if .Values.livenessProbe }}
           livenessProbe:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          {{- else if .Values.port.number }}
+          livenessProbe:
+            {{- include "app.probe" . | nindent 12 }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
           {{- end }}
           {{- with .Values.resources }}
           resources:

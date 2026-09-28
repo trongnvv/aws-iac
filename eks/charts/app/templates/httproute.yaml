@@ -20,6 +20,6 @@ spec:
     {{- else }}
     - backendRefs:
         - name: {{ include "app.name" . }}
-          port: {{ .Values.httpRoute.servicePort }}
+          port: {{ .Values.httpRoute.servicePort | default (include "app.servicePort" .) }}
     {{- end }}
 {{- end }}

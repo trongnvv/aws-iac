@@ -1,27 +1,55 @@
 # ---- workload (Deployment) ----
-# The Deployment renders only when `image` is set; leave empty to use the chart
-# purely for services / raw customValues (e.g. CRs).
+# The Deployment renders only when `image` is set; leave empty to use the chart purely
+# for services / raw customValues (e.g. CRs).
 nameOverride: ""          # defaults to the release name; drives labels + selectors
 image: ""                 # full ref, e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/app:v1"
 imagePullPolicy: IfNotPresent
 replicas: 1
 command: []
 args: []
-containerPorts: []        # [{name, containerPort}]
 env: []                   # raw env list (name/value or valueFrom)
-resources: {}
-securityContext: {}       # container securityContext
-podSecurityContext: {}
-readinessProbe: {}        # raw probe spec (httpGet / grpc / tcpSocket / exec)
-livenessProbe: {}
 labels: {}                # extra labels merged onto every object
 
-# ---- services (a list, so one release can expose several: e.g. ClusterIP + headless) ----
+# ---- primary port — single source of truth ----
+# Flows to: the container port, the default Service port, the auto health probes, and
+# the default Ingress / HTTPRoute / GRPCRoute backend port. Override any of them in place.
+port:
+  name: http              # port name referenced everywhere
+  number: 8080            # containerPort
+  appProtocol: ""         # "grpc" -> gRPC probe + Service appProtocol; else HTTP probe
+  servicePort: 0          # Service port; 0 => same as `number`
+  healthPath: /healthz    # HTTP readiness/liveness path (ignored when appProtocol=grpc)
+
+containerPorts: []        # extra container ports beyond `port` (advanced)
+
+# ---- probes: empty => auto-derived from `port` (grpc vs http). Set to override. ----
+readinessProbe: {}
+livenessProbe: {}
+
+# ---- sane defaults (override per release) ----
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+podSecurityContext: {}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532        # distroless :nonroot uid — numeric so kubelet can verify non-root
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# ---- services (a list; each port defaults from `port` when `ports` is omitted) ----
 services: []
 # - name: ""              # defaults to app name
 #   type: ClusterIP
 #   clusterIP: ""         # "None" for a headless Service
-#   ports: [{name, port, targetPort, appProtocol}]
+#   ports: []             # omit => one port derived from `port`
 
 # ---- ingress (ALB / nginx / ...) ----
 ingress:
@@ -29,12 +57,12 @@ ingress:
   className: alb
   annotations: {}
   rules: []
-  # - host: ""            # optional; omit to match on any host (reach via LB DNS)
+  # - host: ""            # optional; omit to match any host (reach via LB DNS)
   #   paths:
   #     - path: /
   #       pathType: Prefix
   #       serviceName: ""  # defaults to app name
-  #       servicePort: 80
+  #       servicePort: 0   # 0 => from `port`
 
 # ---- Gateway API Gateway ----
 gateway:
@@ -42,26 +70,22 @@ gateway:
   gatewayClassName: kong
   annotations: {}
   listeners: []           # raw listeners list
-  # - name: http
-  #   protocol: HTTP
-  #   port: 80
-  #   allowedRoutes: {namespaces: {from: Same}}
 
 # ---- Gateway API HTTPRoute ----
 httpRoute:
   enabled: false
   parentRefs: []          # [{name, namespace?, sectionName?}]
   hostnames: []
-  servicePort: 80         # used by the default rule when `rules` is empty
-  rules: []               # raw HTTPRoute rules; overrides the default backendRef rule
+  servicePort: 0          # 0 => from `port`
+  rules: []               # raw rules; overrides the default backendRef rule
 
 # ---- Gateway API GRPCRoute ----
 grpcRoute:
   enabled: false
-  parentRefs: []          # [{name, namespace?, sectionName?}]
+  parentRefs: []
   hostnames: []
-  servicePort: 50051      # used by the default rule when `rules` is empty
-  rules: []               # raw GRPCRoute rules; overrides the default backendRef rule
+  servicePort: 0          # 0 => from `port`
+  rules: []
 
 # ---- raw passthrough: arbitrary manifests rendered as-is (CRs the fields don't cover) ----
 customValues: []

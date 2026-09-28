@@ -22,7 +22,7 @@ spec:
               service:
                 name: {{ .serviceName | default (include "app.name" $) }}
                 port:
-                  number: {{ .servicePort }}
+                  number: {{ .servicePort | default (include "app.servicePort" $) }}
           {{- end }}
       {{- with .host }}
       host: {{ . | quote }}

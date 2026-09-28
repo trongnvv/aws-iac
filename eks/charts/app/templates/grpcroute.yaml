@@ -20,6 +20,6 @@ spec:
     {{- else }}
     - backendRefs:
         - name: {{ include "app.name" . }}
-          port: {{ .Values.grpcRoute.servicePort }}
+          port: {{ .Values.grpcRoute.servicePort | default (include "app.servicePort" .) }}
     {{- end }}
 {{- end }}
