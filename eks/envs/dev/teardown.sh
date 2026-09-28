@@ -12,6 +12,9 @@ CLUSTER=eks-dev
 # point kubeconfig at this env's cluster (best effort)
 ( aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1 ) || true
 
+echo "== 03-application (reverse) =="
+for d in $(ls -d 03-application/*/ 2>/dev/null | sort -r); do ( cd "$d" && helmfile destroy 2>/dev/null ) || true; done
+
 echo "== 02-platform (reverse) =="
 for d in $(ls -d 02-platform/*/ 2>/dev/null | sort -r); do ( cd "$d" && helmfile destroy 2>/dev/null ) || true; done
 

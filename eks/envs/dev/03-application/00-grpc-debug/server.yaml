@@ -1,0 +1,61 @@
+# gRPC server release (charts/app). Release name = grpc-server -> pods/Services get
+# label app.kubernetes.io/name=grpc-server. 3 replicas so you can watch which backend
+# the client's single long-lived connection lands on.
+# Set the ECR account id once:
+#   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" server.yaml
+image: "ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/server:v1"
+replicas: 3
+containerPorts:
+  - name: grpc
+    containerPort: 50051
+env:
+  - name: LISTEN_ADDR
+    value: ":50051"
+  # Downward API: report the real pod IP so the client log tells apart the ClusterIP
+  # VIP from the actual backend it landed on.
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+readinessProbe:
+  grpc:
+    port: 50051
+  initialDelaySeconds: 3
+  periodSeconds: 5
+livenessProbe:
+  grpc:
+    port: 50051
+  initialDelaySeconds: 5
+  periodSeconds: 10
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532 # distroless :nonroot uid — numeric so kubelet can verify non-root
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+services:
+  # ClusterIP — one virtual IP; L4 pins gRPC's single HTTP/2 conn to one backend.
+  - name: grpc-server
+    type: ClusterIP
+    ports:
+      - name: grpc
+        port: 50051
+        targetPort: grpc
+        appProtocol: grpc
+  # Headless — DNS returns every pod IP; use with client LB_POLICY=round_robin.
+  - name: grpc-server-headless
+    type: ClusterIP
+    clusterIP: None
+    ports:
+      - name: grpc
+        port: 50051
+        targetPort: grpc
+        appProtocol: grpc

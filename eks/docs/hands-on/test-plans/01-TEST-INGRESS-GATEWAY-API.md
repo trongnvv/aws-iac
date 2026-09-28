@@ -15,7 +15,7 @@ gRPC — and how Kong's Gateway API mode differs from a mesh's (no new load bala
 - A domain + ACM cert from `../../../../foundation/01-dns` if you want real TLS; otherwise
   port-forward / `curl --resolve` against the ALB hostname.
 - REST backend: `traefik/whoami` (public, multi-arch — no ECR push needed).
-- gRPC backend: reuse `../../../ad-hoc/grpc-conn-debug/` (already builds arm64 images to
+- gRPC backend: reuse `../../../envs/dev/03-application/00-grpc-debug/` (already builds arm64 images to
   the shared ECR); this test only changes how it's **exposed**, not the app.
 
 ## 1. Case A — REST through classic Ingress (ALB)
@@ -121,7 +121,7 @@ grpcurl -d '{}' "$(kubectl -n grpc-debug get ingress grpc-server -o jsonpath='{.
 ```
 **Gotcha to observe:** the ALB is L7 but still opens **one HTTP/2 connection per
 client**, so it doesn't reproduce the pinning bug from the base lab — that only shows
-up with an L4 `ClusterIP` *inside* the cluster (see `../../../ad-hoc/grpc-conn-debug/`).
+up with an L4 `ClusterIP` *inside* the cluster (see `../../../envs/dev/03-application/00-grpc-debug/`).
 
 ## 4. Case D — gRPC through Gateway API (`GRPCRoute`)
 This is the real differentiator: Gateway API has a **native `GRPCRoute` kind**, no

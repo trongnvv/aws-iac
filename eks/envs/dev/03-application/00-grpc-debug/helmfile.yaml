@@ -1,0 +1,21 @@
+# gRPC connection load-balancing lab — two releases (server + client) off the shared
+# charts/app app chart. Namespace grpc-debug is created by helmfile (createNamespace),
+# not by the chart. Needs the AWS Load Balancer Controller (01-addons/02) for the
+# client Ingress. Set the ECR account id in server.yaml + client.yaml before first
+# apply (see README.md).
+releases:
+  - name: grpc-server
+    namespace: grpc-debug
+    createNamespace: true
+    chart: ../../../../charts/app
+    values:
+      - server.yaml
+
+  - name: grpc-client
+    namespace: grpc-debug
+    createNamespace: true
+    chart: ../../../../charts/app
+    needs:
+      - grpc-debug/grpc-server
+    values:
+      - client.yaml

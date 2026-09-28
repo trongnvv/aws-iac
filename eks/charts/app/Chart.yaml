@@ -1,6 +1,10 @@
 apiVersion: v2
 name: app
-description: Renders arbitrary raw K8s manifests passed via .Values.customValues.
+description: >-
+  Small reusable app chart — renders a Deployment, Service(s), Ingress and/or Gateway
+  API resources (Gateway, HTTPRoute, GRPCRoute) from structured values, plus arbitrary
+  raw manifests via .Values.customValues. Namespaces are NOT managed here (use the
+  release namespace / createNamespace).
 type: application
-version: 0.1.0
+version: 0.3.0
 appVersion: "1.0.0"

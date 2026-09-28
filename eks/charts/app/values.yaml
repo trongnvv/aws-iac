@@ -1,2 +1,67 @@
-# List of raw K8s manifests to render as-is. Each item becomes one document.
+# ---- workload (Deployment) ----
+# The Deployment renders only when `image` is set; leave empty to use the chart
+# purely for services / raw customValues (e.g. CRs).
+nameOverride: ""          # defaults to the release name; drives labels + selectors
+image: ""                 # full ref, e.g. "<acct>.dkr.ecr.<region>.amazonaws.com/app:v1"
+imagePullPolicy: IfNotPresent
+replicas: 1
+command: []
+args: []
+containerPorts: []        # [{name, containerPort}]
+env: []                   # raw env list (name/value or valueFrom)
+resources: {}
+securityContext: {}       # container securityContext
+podSecurityContext: {}
+readinessProbe: {}        # raw probe spec (httpGet / grpc / tcpSocket / exec)
+livenessProbe: {}
+labels: {}                # extra labels merged onto every object
+
+# ---- services (a list, so one release can expose several: e.g. ClusterIP + headless) ----
+services: []
+# - name: ""              # defaults to app name
+#   type: ClusterIP
+#   clusterIP: ""         # "None" for a headless Service
+#   ports: [{name, port, targetPort, appProtocol}]
+
+# ---- ingress (ALB / nginx / ...) ----
+ingress:
+  enabled: false
+  className: alb
+  annotations: {}
+  rules: []
+  # - host: ""            # optional; omit to match on any host (reach via LB DNS)
+  #   paths:
+  #     - path: /
+  #       pathType: Prefix
+  #       serviceName: ""  # defaults to app name
+  #       servicePort: 80
+
+# ---- Gateway API Gateway ----
+gateway:
+  enabled: false
+  gatewayClassName: kong
+  annotations: {}
+  listeners: []           # raw listeners list
+  # - name: http
+  #   protocol: HTTP
+  #   port: 80
+  #   allowedRoutes: {namespaces: {from: Same}}
+
+# ---- Gateway API HTTPRoute ----
+httpRoute:
+  enabled: false
+  parentRefs: []          # [{name, namespace?, sectionName?}]
+  hostnames: []
+  servicePort: 80         # used by the default rule when `rules` is empty
+  rules: []               # raw HTTPRoute rules; overrides the default backendRef rule
+
+# ---- Gateway API GRPCRoute ----
+grpcRoute:
+  enabled: false
+  parentRefs: []          # [{name, namespace?, sectionName?}]
+  hostnames: []
+  servicePort: 50051      # used by the default rule when `rules` is empty
+  rules: []               # raw GRPCRoute rules; overrides the default backendRef rule
+
+# ---- raw passthrough: arbitrary manifests rendered as-is (CRs the fields don't cover) ----
 customValues: []

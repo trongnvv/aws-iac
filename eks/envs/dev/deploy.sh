@@ -5,6 +5,7 @@
 #   ./deploy.sh 00-infra        # Terraform infra only (+ refresh outputs.cache.json)
 #   ./deploy.sh 01-addons       # core add-ons only (cluster must already be up)
 #   ./deploy.sh 02-platform     # platform services only
+#   ./deploy.sh 03-application   # application workloads only
 # Self-contained: every Helm value is hardcoded plain YAML, so there is no
 # `tofu output` wiring between the layers.
 # Prereq: run ../../foundation/apply.sh once (state backend + shared ECR + DNS).
@@ -18,8 +19,8 @@ CLUSTER=eks-dev
 
 LAYER="${1:-all}"
 case "$LAYER" in
-  all|00-infra|01-addons|02-platform) ;;
-  *) echo "usage: $0 [all|00-infra|01-addons|02-platform]"; exit 1 ;;
+  all|00-infra|01-addons|02-platform|03-application) ;;
+  *) echo "usage: $0 [all|00-infra|01-addons|02-platform|03-application]"; exit 1 ;;
 esac
 run() { [ "$LAYER" = "all" ] || [ "$LAYER" = "$1" ]; }
 
@@ -38,7 +39,7 @@ if run 00-infra; then
   done | jq -s 'add' > outputs.cache.json
 fi
 
-if run 01-addons || run 02-platform; then
+if run 01-addons || run 02-platform || run 03-application; then
   echo "== wire kubeconfig =="
   aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
   kubectl apply -f ../../ad-hoc/gp3-default-storageclass.yaml   # default StorageClass (EBS CSI)
@@ -52,6 +53,11 @@ fi
 if run 02-platform; then
   echo "== 02-platform =="
   for d in 02-platform/*/; do ( cd "$d" && helmfile apply --skip-diff-on-install ); done
+fi
+
+if run 03-application; then
+  echo "== 03-application =="
+  for d in 03-application/*/; do ( cd "$d" && helmfile apply --skip-diff-on-install ); done
 fi
 
 echo "== done: dev ($LAYER) =="

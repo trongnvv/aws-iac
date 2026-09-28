@@ -1,0 +1,78 @@
+# gRPC client release (charts/app). Release name = grpc-client. REST front-end drives
+# on-demand gRPC calls; the Ingress exposes it via an ALB (server stays in-cluster).
+# Set the ECR account id once:
+#   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" client.yaml
+image: "ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/client:v1"
+replicas: 1
+containerPorts:
+  - name: http
+    containerPort: 8080
+env:
+  # See README "4 cases": flip SERVER_ADDR / LB_POLICY to change the distribution.
+  #   Case 2/3: SERVER_ADDR=dns:///grpc-server-headless.grpc-debug.svc.cluster.local:50051
+  #   Case 4:   ClusterIP addr + a service mesh (Kuma, 02-platform/06)
+  - name: SERVER_ADDR
+    value: "grpc-server.grpc-debug.svc.cluster.local:50051"
+  - name: LB_POLICY
+    value: "round_robin"
+  - name: HTTP_ADDR
+    value: ":8080"
+  - name: LOOP
+    value: "false"
+  - name: INTERVAL
+    value: "3s"
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+services:
+  - name: grpc-client
+    type: ClusterIP
+    ports:
+      - name: http
+        port: 80
+        targetPort: http
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip # ALB -> pod IP directly (VPC CNI)
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+  rules:
+    # host-less: reach it via the ALB DNS name directly (dev has no external-dns).
+    # For a real domain, add `host: grpc-client.<your-domain>` and run external-dns.
+    - paths:
+        - path: /
+          pathType: Prefix
+          serviceName: grpc-client
+          servicePort: 80
+# For Gateway API instead of the ALB Ingress (needs Kong + Gateway API CRDs v1.3):
+#   ingress: {enabled: false}
+#   httpRoute:
+#     enabled: true
+#     parentRefs: [{name: kong, namespace: kong}]
+#     servicePort: 80
