@@ -1,0 +1,15 @@
+# DNS at scale: a per-node DNS cache. CoreDNS autoscaling is handled natively by
+# the managed coredns add-on (modules/eks) — do NOT add cluster-proportional-autoscaler
+# too, or the two fight over the coredns replica count.
+# NodeLocal DNSCache needs the cluster DNS service IP; on EKS with the default
+# service CIDR (10.100.0.0/16) that is 10.100.0.10. If a custom service CIDR is set
+# in 00-infra/01-eks, update dnsServer in values.yaml accordingly
+# (`kubectl -n kube-system get svc kube-dns`).
+releases:
+  - name: node-local-dns
+    namespace: kube-system
+    chart: oci://ghcr.io/deliveryhero/helm-charts/node-local-dns
+    version: "2.9.2"
+    wait: true
+    values:
+      - values.yaml

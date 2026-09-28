@@ -38,8 +38,8 @@ CloudWatch (roll-your-own) and managed open source (AMP, AMG).
 ## 5. What this repo does today, and the recommended path
 
 Current state:
-- `layer2/01-observability` = **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager) — metrics + UI, self-hosted, **ephemeral** (`emptyDir`).
-- `layer0/06-observability-aws` = **AMP workspace + IAM** — a managed metrics backend, **not yet wired** to a collector.
+- `envs/<env>/02-platform/01-observability` = **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager) — metrics + UI, self-hosted, **ephemeral** (`emptyDir`).
+- `envs/<env>/00-infra/05-observability-aws` = **AMP workspace + IAM** — a managed metrics backend, **not yet wired** to a collector.
 - Gaps: no logs, no traces, no OTel collector, AMG unused, Prometheus not durable (see `REVIEW.md` #2).
 
 Recommended per size (Grafana-LGTM-on-AWS, data in-account):

@@ -1,6 +1,0 @@
-clusterName: {{ requiredEnv "CLUSTER_NAME" | quote }}
-region: {{ requiredEnv "AWS_REGION" | quote }}
-vpcId: {{ requiredEnv "VPC_ID" | quote }}
-serviceAccount:
-  create: true
-  name: aws-load-balancer-controller

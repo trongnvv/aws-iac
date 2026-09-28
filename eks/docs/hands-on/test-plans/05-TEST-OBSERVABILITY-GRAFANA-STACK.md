@@ -1,13 +1,13 @@
 # Test — observability, Grafana stack (self-hosted)
 
-Exercises what's already deployed: `layer2-platform/01-observability` is
+Exercises what's already deployed: `envs/<env>/02-platform/01-observability` is
 kube-prometheus-stack (Prometheus + Grafana + Alertmanager), in both env presets'
 `L2` list. This test just proves it works end-to-end and reproduces the durability
 gap called out in `docs/REVIEW.md` #2.
 
 ## 0. Prereqs
-Cluster up, `layer2-platform/00-argocd` + `layer2-platform/01-observability` applied
-(`scripts/deploy.sh <env>` does both).
+Cluster up, `envs/<env>/02-platform/00-argocd` + `envs/<env>/02-platform/01-observability` applied
+(`cd envs/<env> && ./deploy.sh` does both).
 
 ## 1. Confirm it's running
 ```bash
@@ -48,7 +48,7 @@ kubectl -n monitoring delete pod -l app.kubernetes.io/name=prometheus
 ```
 Prometheus comes back with an **empty TSDB** — the chart defaults to `emptyDir`. Fix
 by adding a `gp3` PVC + retention to the helmfile values
-(`layer2-platform/01-observability/values*.yaml` — create if not present):
+(`envs/<env>/02-platform/01-observability/values*.yaml` — create if not present):
 ```yaml
 prometheus:
   prometheusSpec:
@@ -60,7 +60,7 @@ prometheus:
           resources: { requests: { storage: 50Gi } }
 ```
 ```bash
-( cd layer2-platform/01-observability && helmfile apply )
+( cd envs/<env>/02-platform/01-observability && helmfile apply )
 ```
 Repeat the pod-delete test — data should now survive the restart (PVC persists).
 
@@ -70,4 +70,4 @@ pkill -f 'port-forward svc/kube-prometheus-stack'
 kubectl delete pod load 2>/dev/null || true   # if the --rm hey pod didn't self-clean
 ```
 Leave the stack running if it's still needed for other tests in the plan; otherwise
-`helmfile destroy` in `layer2-platform/01-observability`.
+`helmfile destroy` in `envs/<env>/02-platform/01-observability`.

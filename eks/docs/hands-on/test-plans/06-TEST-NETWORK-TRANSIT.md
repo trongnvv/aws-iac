@@ -38,8 +38,8 @@ exchange/partner boxes `docs/NETWORKING.md` §2 talks about allowlisting.
 ```bash
 TGW=$(aws ec2 create-transit-gateway --description "lab-tgw" \
   --query TransitGateway.TransitGatewayId --output text)
-DEV_VPC=$(cd ../../../../envs/dev/00-network && tofu output -raw vpc_id)
-DEV_APP_SUBNETS=$(cd ../../../../envs/dev/00-network && tofu output -json app_subnet_ids | jq -r '.[0]')
+DEV_VPC=$(cd ../../../../envs/dev/00-infra/00-network && tofu output -raw vpc_id)
+DEV_APP_SUBNETS=$(cd ../../../../envs/dev/00-infra/00-network && tofu output -json app_subnet_ids | jq -r '.[0]')
 
 aws ec2 create-transit-gateway-vpc-attachment --transit-gateway-id "$TGW" \
   --vpc-id "$DEV_VPC" --subnet-ids "$DEV_APP_SUBNETS"
@@ -58,7 +58,7 @@ aws ec2 create-route --route-table-id "$PARTNER_RT" --destination-cidr-block 10.
 Open the path in security groups — the cluster's shared SG (both ALB/LBC-managed
 pods and the control plane use it) needs an inbound rule from the partner CIDR:
 ```bash
-CLUSTER_SG=$(cd ../../../../envs/dev/01-eks && tofu output -raw cluster_security_group_id)
+CLUSTER_SG=$(cd ../../../../envs/dev/00-infra/01-eks && tofu output -raw cluster_security_group_id)
 aws ec2 authorize-security-group-ingress --group-id "$CLUSTER_SG" \
   --protocol tcp --port 80 --cidr 10.99.0.0/24
 ```
@@ -94,7 +94,7 @@ aws iam create-role --role-name VPCLatticeControllerIAMRole \
   --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}'
 aws iam attach-role-policy --role-name VPCLatticeControllerIAMRole --policy-arn "$POLICY_ARN"
 ROLE_ARN=$(aws iam list-roles --query 'Roles[?RoleName==`VPCLatticeControllerIAMRole`].Arn' --output text)
-CLUSTER_NAME=$(cd ../../../../envs/dev/01-eks && tofu output -raw cluster_name)
+CLUSTER_NAME=$(cd ../../../../envs/dev/00-infra/01-eks && tofu output -raw cluster_name)
 aws eks create-pod-identity-association --cluster-name "$CLUSTER_NAME" --role-arn "$ROLE_ARN" \
   --namespace aws-application-networking-system --service-account gateway-api-controller
 

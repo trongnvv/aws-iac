@@ -12,9 +12,9 @@ are done; what remains is Medium/Low hardening.
   `enable_network_firewall`. (was High #2)
 - **Chart versions verified.** All 16 pinned Helm charts (incl. kuma + the two OCI
   charts) exist at the pinned version. (was High #3)
-- **Redundancy trimmed.** Removed 13 duplicate per-folder READMEs (kept the 3 layer
-  READMEs + bootstrap); removed the empty `02-node-group` placeholder and renumbered
-  layer0 to `00–08` contiguous.
+- **Redundancy trimmed.** Removed 13 duplicate per-folder READMEs (layer overview
+  consolidated into `envs/README.md` + bootstrap); removed the empty `02-node-group`
+  placeholder. Infra roots are `00–07` contiguous under each env's `00-infra/`.
 
 ## Correctness — Medium
 1. **node-local-dns** values (`config.dnsServer/localDnsIp`) — verify against the
@@ -44,4 +44,5 @@ are done; what remains is Medium/Low hardening.
 - Paid features default `enable_* = false` — real cost discipline.
 - Prefix delegation, Karpenter discovery tags, static egress IP, VPC endpoints,
   proper Network Firewall egress path.
-- Helmfile `values/*.gotmpl` convention; deploy scripts self-derive infra vars.
+- Hardcoded plain-YAML helm values per env (no gotmpl, no tofu-output wiring); each
+  env is a self-contained `00-infra`/`01-addons`/`02-platform` stack with its own scripts.

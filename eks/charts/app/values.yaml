@@ -1,0 +1,2 @@
+# List of raw K8s manifests to render as-is. Each item becomes one document.
+customValues: []

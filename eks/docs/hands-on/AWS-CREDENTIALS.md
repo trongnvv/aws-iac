@@ -77,7 +77,7 @@ export TF_VAR_domain=yourdomain.com        # your registered domain
 ./apply.sh                                  # creates state bucket + lock, then zone + ACM
 # copy the printed name_servers into your registrar (delegation)
 ```
-Then deploy an env: `cd ../eks && ./scripts/deploy.sh dev`.
+Then deploy an env: `cd ../eks/envs/dev && ./deploy.sh`.
 
 ## 6. Cost & safety (do this first)
 - **Budget alarm:** Console → **Billing → Budgets** → create a small monthly budget
@@ -86,7 +86,7 @@ Then deploy an env: `cd ../eks && ./scripts/deploy.sh dev`.
 - **Least privilege later:** `AdministratorAccess` is for a solo lab only.
 - **Never commit secrets:** keep `~/.aws/*` out of git. The repo `.gitignore` already
   excludes `env.sh`, `*.tfvars`, and state files.
-- **Tear down:** `./scripts/teardown.sh dev` when finished — the cluster bills hourly.
+- **Tear down:** `cd envs/dev && ./teardown.sh` when finished — the cluster bills hourly.
 
 ## 7. Troubleshooting
 | Error | Cause / fix |

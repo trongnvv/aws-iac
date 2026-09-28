@@ -1,7 +1,7 @@
 # Test — Ingress vs Gateway API, REST vs gRPC
 
 Compares the two north-south entry points the platform can use (classic `Ingress` via
-the AWS Load Balancer Controller vs `Gateway API` via Kong, `layer2/05`) against both a
+the AWS Load Balancer Controller vs `Gateway API` via Kong, `envs/prod/02-platform/05-api-gateway`) against both a
 REST and a gRPC backend. 4 combinations; the interesting contrast is how each handles
 gRPC — and how Kong's Gateway API mode differs from a mesh's (no new load balancer).
 
@@ -9,8 +9,8 @@ gRPC — and how Kong's Gateway API mode differs from a mesh's (no new load bala
 > if a `kubectl delete` hangs on a `LoadBalancer`/`Ingress` finalizer.
 
 ## 0. Prereqs
-- Cluster up, `layer1-addons/02-aws-load-balancer-controller` applied (in both `dev`
-  and `prod` presets already), and `layer2-platform/05-api-gateway` (Kong) applied for
+- Cluster up, `envs/<env>/01-addons/02-aws-load-balancer-controller` applied (in both `dev`
+  and `prod` presets already), and `envs/prod/02-platform/05-api-gateway` (Kong) applied for
   cases B/D.
 - A domain + ACM cert from `../../../../foundation/01-dns` if you want real TLS; otherwise
   port-forward / `curl --resolve` against the ALB hostname.
@@ -159,7 +159,7 @@ Hammer it like in the base lab (§4 there) and confirm Kong's L7 proxy spreads l
 across all 3 server pods without any client-side `round_robin` config — the gateway
 does what case 3/4 of the base lab needed the client to do manually. (This is a
 *gateway* doing east-west LB on its way in, not the mesh — compare against Kuma
-`layer2/06` doing the same job sidecar-to-sidecar, no gateway involved.)
+`envs/prod/02-platform/06-service-mesh` doing the same job sidecar-to-sidecar, no gateway involved.)
 
 ## 5. Comparison
 
@@ -167,7 +167,7 @@ does what case 3/4 of the base lab needed the client to do manually. (This is a
 |---|---|---|
 | REST | Works out of the box | Works, routes onto the existing `kong-kong-proxy` Service — no new LB (unmanaged `GatewayClass`) |
 | gRPC | Needs `backend-protocol-version: GRPC` annotation + HTTPS listener | Native `GRPCRoute` kind (KIC ≥ 3.2), protocol-aware by design |
-| Load balancer | Always ALB | None new — reuses the Kong proxy Service already created by `layer2/05` |
+| Load balancer | Always ALB | None new — reuses the Kong proxy Service already created by `envs/prod/02-platform/05-api-gateway` |
 | Portability | AWS-specific annotations | Same YAML works on any Gateway API implementation |
 | Setup | `GatewayClass` auto-registered by the controller | Must create the `GatewayClass` yourself (unmanaged mode) |
 

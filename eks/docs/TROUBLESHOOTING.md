@@ -82,7 +82,7 @@ kubectl -n kube-system logs -l k8s-app=kube-dns --tail=50
 kubectl run dnstest --rm -it --image=busybox:1.36 --restart=Never -- nslookup kubernetes.default
 ```
 **Fix:** CoreDNS `Pending` → no nodes yet (§2). Intermittent under load → the managed
-coredns add-on's `autoScaling` (on here) or NodeLocal DNSCache (`layer1/09-dns-scale`).
+coredns add-on's `autoScaling` (on here) or NodeLocal DNSCache (`envs/prod/01-addons/09-dns-scale`).
 Blocked → a NetworkPolicy without a UDP/53 egress allow to kube-system. `kube-proxy` down →
 Service ClusterIP (incl. `kube-dns` 10.x.x.10) won't route.
 
@@ -93,7 +93,7 @@ Service ClusterIP (incl. `kube-dns` 10.x.x.10) won't route.
 aws sts get-caller-identity                     # WHICH principal am I? (note the role ARN)
 aws eks list-access-entries --cluster-name <cluster>
 ```
-**Fix:** add your principal's ARN to `admin_principal_arns` in `envs/<env>/01-eks/main.tf`
+**Fix:** add your principal's ARN to `admin_principal_arns` in `envs/<env>/00-infra/01-eks/main.tf`
 and apply — it becomes an Access Entry with `AmazonEKSClusterAdminPolicy`. **Use the SSO
 permission-set role ARN, not `:root`** (`:root` is invalid for an access entry). This is
 API auth mode → there is **no `aws-auth` ConfigMap** to edit. Kubeconfig pointing at the
@@ -120,7 +120,7 @@ kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-load-balancer-cont
 kubectl -n kube-system logs -l app.kubernetes.io/name=aws-load-balancer-controller --tail=80
 kubectl describe ingress <ing> -n <ns>          # Events: subnet discovery / auth errors
 ```
-**Fix:** LBC is **Helm (layer1/02)**, not a managed add-on — install it. IAM → its Pod
+**Fix:** LBC is **Helm (`envs/<env>/01-addons/02-aws-load-balancer-controller`)**, not a managed add-on — install it. IAM → its Pod
 Identity role needs the LBC policy (`addon-iam` module). **Subnet tags** are mandatory:
 public subnets `kubernetes.io/role/elb=1`, private `kubernetes.io/role/internal-elb=1`
 (set by `modules/network`). No `ingressClassName: alb` / wrong annotations → LBC ignores it.
@@ -211,7 +211,7 @@ aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=<vpc> \
   --query 'NetworkInterfaces[?Status==`in-use`].[NetworkInterfaceId,Description]' --output table
 kubectl get svc,ingress -A          # any type=LoadBalancer still up?
 ```
-**Fix:** **destroy the LB Controller and its ALBs/NLBs before the VPC** — `scripts/teardown.sh`
+**Fix:** **destroy the LB Controller and its ALBs/NLBs before the VPC** — `cd envs/<env> && ./teardown.sh`
 does this in order (removes ingress → ELBs → ENIs, then VPC). Stuck cluster create → check
 `describe-cluster` `health.issues` (bad subnet/role). Leftover Karpenter nodes → they aren't
-in tofu state; delete NodeClaims / terminate instances before destroying `00-network`.
+in tofu state; delete NodeClaims / terminate instances before destroying `00-infra/00-network`.

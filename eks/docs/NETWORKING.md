@@ -30,7 +30,7 @@ packet-level mechanics (route tables, VPC CNI IP allocation, cross-account ENIs)
 Internet → [CloudFront → WAF/Shield] → [ALB/NLB (LBC)] → [API GW (Kong)] → Service
 ```
 
-The **AWS Load Balancer Controller** (`layer1/02-lb-controller`) provisions **both** load
+The **AWS Load Balancer Controller** (`envs/<env>/01-addons/02-aws-load-balancer-controller`) provisions **both** load
 balancer types from Kubernetes objects — choose per workload:
 
 | | **ALB** (L7) | **NLB** (L4) |
@@ -52,18 +52,18 @@ skipping the node-port hop.
 > low latency, static EIP for exchange allowlisting, and preserved source IP.
 
 **Supporting components:**
-- **DNS:** external-dns (`layer1/03`) → Route 53 records.
-- **TLS:** cert-manager (`layer1/04`) → ACM / Let's Encrypt.
-- **WAF:** `layer0/08-waf` — attach to an ALB via the Ingress annotation
+- **DNS:** external-dns (`envs/prod/01-addons/03-external-dns`) → Route 53 records.
+- **TLS:** cert-manager (`envs/<env>/01-addons/04-cert-manager`) → ACM / Let's Encrypt.
+- **WAF:** `envs/<env>/00-infra/07-waf` — attach to an ALB via the Ingress annotation
   `alb.ingress.kubernetes.io/wafv2-acl-arn`.
-- **API management:** Kong (`layer2/05-api-gateway`) behind the LB — rate limiting, auth,
+- **API management:** Kong (`envs/prod/02-platform/05-api-gateway`) behind the LB — rate limiting, auth,
   request transform, versioning.
 
 **Other edge options (beyond ALB/NLB):**
 - **Gateway API** — the successor to `Ingress` (LBC supports it); role-split `Gateway` +
   `HTTPRoute`, cleaner for multi-team clusters.
 - **CloudFront + WAF/Shield** — CDN/edge cache + DDoS, global entry (not yet in IaC).
-- **Kong Gateway API mode** (`layer2/05`) — the same Kong release can also act as a
+- **Kong Gateway API mode** (`envs/prod/02-platform/05-api-gateway`) — the same Kong release can also act as a
   Gateway API implementation (unmanaged `GatewayClass: kong`, reusing the existing
   proxy Service — no new LB). Overlaps LBC — pick one as *the* gateway (classic
   `Ingress` via LBC, or `Gateway`/`HTTPRoute` via Kong).
@@ -80,13 +80,13 @@ skipping the node-port hop.
 Service → [NetworkPolicy] → [Network Firewall / Kuma zone egress] → [NAT (static EIP)] → partner/exchange
 ```
 
-- **Static egress IP** for partner/exchange source-IP allowlisting: `layer0/00-network`
+- **Static egress IP** for partner/exchange source-IP allowlisting: `envs/<env>/00-infra/00-network`
   output `nat_public_ips` (the NAT EIP is what the outside world sees).
-- **L3/L4 egress filtering:** NetworkPolicy (`layer1/07-network-policy`) — pod-level allow/deny.
+- **L3/L4 egress filtering:** NetworkPolicy (`envs/prod/01-addons/07-network-policy`) — pod-level allow/deny.
 - **Centralized L7 inspection:** two mutually-exclusive options —
-  - **AWS Network Firewall** (`enable_network_firewall` in `00-network`) — dedicated firewall
+  - **AWS Network Firewall** (`enable_network_firewall` in `00-infra/00-network`) — dedicated firewall
     subnets + app-egress route redirect; domain/FQDN allowlists, IPS. **~$865/mo** — prod only.
-  - **Kuma zone egress** (`layer2/06`) — if the mesh is already in place; policy in-cluster.
+  - **Kuma zone egress** (`envs/prod/02-platform/06-service-mesh`) — if the mesh is already in place; policy in-cluster.
 - **Skip the NAT for AWS APIs:** VPC endpoints (§4) route ECR/S3/Secrets Manager privately —
   cheaper and works on a fully private cluster.
 

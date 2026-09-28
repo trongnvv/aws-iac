@@ -1,0 +1,3 @@
+settings:
+  clusterName: eks-dev
+  interruptionQueue: eks-dev

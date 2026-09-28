@@ -9,14 +9,14 @@ layer ships an ADOT/OTel collector yet. This test adds one by hand.
 > (§5) — it's `false` by default in both env presets.
 
 ## 0. Prereqs
-Cluster up, `layer0/05-observability-aws` applied at least once (creates nothing while
+Cluster up, `envs/<env>/00-infra/05-observability-aws` applied at least once (creates nothing while
 `enable_amp` is false).
 
 ## 1. Turn on AMP for the env
-Edit `envs/<env>/05-observability-aws/*.tf`, add `enable_amp = true` to the
+Edit `envs/<env>/00-infra/05-observability-aws/*.tf`, add `enable_amp = true` to the
 `observability_aws` module block (or pass `-var enable_amp=true`), then:
 ```bash
-( cd envs/dev/05-observability-aws && tofu apply )
+( cd envs/dev/00-infra/05-observability-aws && tofu apply )
 AMP_URL=$(tofu output -raw amp_remote_write_url)
 AMP_ARN=$(tofu output -raw amp_workspace_arn)
 echo "$AMP_URL"
@@ -50,7 +50,7 @@ errors (401 = pod identity association mismatch from step 1).
 
 ## 3. Verify data landed in AMP
 ```bash
-aws amp list-workspaces --alias "$(cd envs/dev/01-eks && tofu output -raw cluster_name)-amp"
+aws amp list-workspaces --alias "$(cd envs/dev/00-infra/01-eks && tofu output -raw cluster_name)-amp"
 # quick query via the AMP query API (needs aps:QueryMetrics on your own identity, not the collector's role)
 aws amp query-metrics --workspace-id "$(basename "$AMP_ARN")" \
   --query '{__name__="up"}' 2>/dev/null || echo "use a Grafana/AMG datasource instead — see §4"
@@ -70,7 +70,7 @@ Not modeled in Terraform here (console/CLI, one-off for the test):
 ```bash
 helm uninstall adot -n opentelemetry
 kubectl delete ns opentelemetry
-# then in envs/dev/05-observability-aws/*.tf: enable_amp = false
-( cd envs/dev/05-observability-aws && tofu apply )
+# then in envs/dev/00-infra/05-observability-aws/*.tf: enable_amp = false
+( cd envs/dev/00-infra/05-observability-aws && tofu apply )
 ```
 Delete the AMG workspace from the console too (it isn't Terraform-managed either).

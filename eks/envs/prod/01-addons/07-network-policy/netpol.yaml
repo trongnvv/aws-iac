@@ -1,0 +1,33 @@
+# Baseline NetworkPolicies for a namespace. Copy per app namespace (change the
+# `namespace:` field), then layer in explicit allows.
+customValues:
+  # Default deny all ingress + egress.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-all
+      namespace: default
+    spec:
+      podSelector: {}
+      policyTypes: ["Ingress", "Egress"]
+
+  # Allow DNS egress (so pods can still resolve names under default-deny).
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-dns-egress
+      namespace: default
+    spec:
+      podSelector: {}
+      policyTypes: ["Egress"]
+      egress:
+        - to:
+            - namespaceSelector: {}
+              podSelector:
+                matchLabels:
+                  k8s-app: kube-dns
+          ports:
+            - port: 53
+              protocol: UDP
+            - port: 53
+              protocol: TCP

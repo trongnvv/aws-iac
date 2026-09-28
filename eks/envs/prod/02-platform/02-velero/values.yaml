@@ -1,0 +1,23 @@
+serviceAccount:
+  server:
+    name: velero
+credentials:
+  useSecret: false
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.11.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+configuration:
+  backupStorageLocation:
+    - name: aws
+      provider: aws
+      bucket: prod-eks-velero-backups
+      config:
+        region: ap-southeast-1
+  volumeSnapshotLocation:
+    - name: aws
+      provider: aws
+      config:
+        region: ap-southeast-1

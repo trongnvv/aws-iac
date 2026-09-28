@@ -1,0 +1,12 @@
+# Argo CD — GitOps. Bootstrap here, then let an app-of-apps manage the rest.
+repositories:
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+releases:
+  - name: argocd
+    namespace: argocd
+    createNamespace: true
+    chart: argo/argo-cd
+    version: "10.9.2"
+    wait: true

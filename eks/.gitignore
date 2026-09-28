@@ -13,5 +13,7 @@ kubeconfig
 .env
 
 # Helm
-charts/
 *.tgz
+
+# deploy.sh writes the real tofu outputs here (account-specific IDs) — reference cache
+outputs.cache.json

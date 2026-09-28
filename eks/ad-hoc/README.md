@@ -10,4 +10,4 @@ push an image, walk through a deploy). This folder holds **deployable manifests*
 | Lab | What |
 |---|---|
 | `grpc-conn-debug/` | Shows the gRPC-on-L4-Service load-balancing gotcha (one pinned backend) and the fixes |
-| `gp3-default-storageclass.yaml` | Default `gp3` StorageClass, applied post-cluster by `scripts/deploy.sh` |
+| `gp3-default-storageclass.yaml` | Default `gp3` StorageClass, applied post-cluster by the env's `deploy.sh` |

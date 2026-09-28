@@ -8,7 +8,7 @@ docs side by side is the point of this pair of tests.
 - A GitLab project (gitlab.com or self-managed) with a Dockerfile app — same
   throwaway app as the AWS-native test works.
 - Shared ECR `app` repo (`foundation/02-ecr`).
-- `layer2-platform/00-argocd` applied, and the same manifests-repo Application from
+- `envs/<env>/02-platform/00-argocd` applied, and the same manifests-repo Application from
   `02-TEST-CICD-AWS-NATIVE.md` §4 (or a fresh one pointed at a GitLab manifests repo).
 
 ## 1. Register a runner token

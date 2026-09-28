@@ -1,0 +1,9 @@
+# Baseline NetworkPolicies, rendered via the shared charts/app raw-manifest chart.
+# Enforcement engine is the VPC CNI network-policy feature (enable_network_policy
+# in 00-infra/01-eks) or Cilium.
+releases:
+  - name: network-policy-baseline
+    namespace: default
+    chart: ../../../../charts/app
+    values:
+      - netpol.yaml

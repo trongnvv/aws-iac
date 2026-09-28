@@ -1,0 +1,7 @@
+# vpcId omitted on purpose — the controller auto-discovers it from the node's
+# IMDS, so no Terraform output wiring is needed.
+clusterName: eks-dev
+region: ap-southeast-1
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller

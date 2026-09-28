@@ -1,0 +1,23 @@
+# Karpenter controller (OCI chart) + the default NodePool/EC2NodeClass.
+# AWS-side IAM/SQS come from 00-infra/02-karpenter-infra:
+#   - node IAM role name is the module's stable "Karpenter-<cluster>"
+#   - the SQS interruption queue name defaults to the cluster name
+# If interruption handling misbehaves, confirm the queue name with
+# `tofu -chdir=../../00-infra/02-karpenter-infra output karpenter_queue_name`.
+releases:
+  - name: karpenter
+    namespace: kube-system
+    chart: oci://public.ecr.aws/karpenter/karpenter
+    version: "1.14.0"
+    wait: true
+    values:
+      - values.yaml
+
+  # NodePool + EC2NodeClass, rendered via the shared charts/app raw-manifest chart.
+  - name: karpenter-nodepool
+    namespace: kube-system
+    chart: ../../../../charts/app
+    needs:
+      - kube-system/karpenter
+    values:
+      - nodepool.yaml

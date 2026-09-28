@@ -1,0 +1,8 @@
+provider: aws
+policy: sync
+txtOwnerId: eks-prod
+domainFilters:
+  - example.com
+serviceAccount:
+  create: true
+  name: external-dns

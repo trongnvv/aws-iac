@@ -1,0 +1,25 @@
+# cert-manager + a Let's Encrypt HTTP-01 ClusterIssuer (solved via the ALB).
+# HTTP-01 needs no AWS IAM; switch to DNS-01 (Route 53) if you need wildcards.
+repositories:
+  - name: jetstack
+    url: https://charts.jetstack.io
+
+releases:
+  - name: cert-manager
+    namespace: cert-manager
+    createNamespace: true
+    chart: jetstack/cert-manager
+    version: "v1.21.1"
+    wait: true
+    values:
+      - crds:
+          enabled: true
+
+  # ClusterIssuer, rendered via the shared charts/app raw-manifest chart.
+  - name: cert-manager-issuer
+    namespace: cert-manager
+    chart: ../../../../charts/app
+    needs:
+      - cert-manager/cert-manager
+    values:
+      - clusterissuer.yaml

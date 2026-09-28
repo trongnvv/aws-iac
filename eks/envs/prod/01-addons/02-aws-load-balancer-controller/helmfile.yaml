@@ -1,0 +1,14 @@
+# AWS Load Balancer Controller. IAM via Pod Identity from 00-infra/03-addon-iam
+# (SA aws-load-balancer-controller in kube-system) — no IRSA annotation needed.
+repositories:
+  - name: eks
+    url: https://aws.github.io/eks-charts
+
+releases:
+  - name: aws-load-balancer-controller
+    namespace: kube-system
+    chart: eks/aws-load-balancer-controller
+    version: "3.5.0"
+    wait: true
+    values:
+      - values.yaml
