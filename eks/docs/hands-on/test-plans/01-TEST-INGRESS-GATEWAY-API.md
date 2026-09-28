@@ -48,8 +48,12 @@ Gateway API CRDs aren't installed by any layer yet, and — unlike Istio — Kon
 auto-register a `GatewayClass` either. Install the CRDs, then create the class once,
 pointing it at Kong's controller in **unmanaged** mode (reuse the existing `kong`
 proxy Service instead of provisioning a new load balancer per `Gateway`):
+
+> **Gateway API version:** pin to **v1.3** — the newest the bundled KIC 3.5
+> (`kong/kong` chart 3.4.1) officially supports (matrix: v1.0–v1.3). Don't jump to
+> v1.6; it's outside Kong's tested range for this chart. See `docs/VERSION-COMPATIBILITY.md`.
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -178,5 +182,5 @@ kubectl delete gateway gw; kubectl delete httproute whoami
 kubectl -n grpc-debug delete ingress grpc-server
 kubectl -n grpc-debug delete gateway grpc-gw; kubectl -n grpc-debug delete grpcroute grpc-server
 kubectl delete gatewayclass kong
-kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
+kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
 ```

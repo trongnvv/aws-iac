@@ -47,3 +47,21 @@ risk is removed/graduated APIs, and the tightest-coupled components are:
 Before cutting a cluster to a new minor, check the **EKS release notes** for that
 version's removed APIs, then re-run the `helm show chart ... | grep kubeVersion` sweep
 after any chart bump.
+
+## Gateway API ↔ Kong KIC (separate constraint from k8s version)
+
+The Gateway API CRDs are installed manually (see
+`docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`), so their version is gated by
+the **Kong Ingress Controller**, not the Kubernetes version:
+
+| Component | Version | Supports Gateway API |
+|---|---|---|
+| `kong/kong` chart | `3.4.1` | — (bundles the KIC below) |
+| Kong Gateway (appVersion) | `3.9` | — |
+| Kong Ingress Controller (KIC) | `3.5` | **v1.0, v1.1, v1.2, v1.3** |
+
+→ **Install Gateway API CRDs at `v1.3`** (`.../releases/download/v1.3.0/standard-install.yaml`).
+Newer Gateway API (v1.4–v1.6) is outside KIC 3.5's tested matrix — the core `v1` routes
+(Gateway/HTTPRoute/GatewayClass/GRPCRoute) may still work since `v1` is backward-compatible,
+but for a prod-shaped lab match the tested version. To use a newer Gateway API, bump the
+Kong chart to one bundling a newer KIC first.
