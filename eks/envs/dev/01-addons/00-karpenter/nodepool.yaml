@@ -48,3 +48,10 @@ customValues:
       securityGroupSelectorTerms:
         - tags:
             karpenter.sh/discovery: "eks-dev"
+      # Karpenter defaults hopLimit=1, which blocks PODS from reaching IMDS — the LBC then
+      # can't auto-discover the VPC id and crashes ("failed to get VPC ID ... ec2imds ...").
+      # hopLimit=2 lets pods reach IMDS; IMDSv2 (httpTokens=required) is kept for security.
+      metadataOptions:
+        httpEndpoint: enabled
+        httpTokens: required
+        httpPutResponseHopLimit: 2
