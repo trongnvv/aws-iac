@@ -5,7 +5,7 @@ lab/spike, not part of the base layer build. Full write-up per item lives in
 `hands-on/test-plans/`.
 
 1. [ ] **Ingress vs Gateway API, REST vs gRPC.** Compare classic Ingress (ALB
-   Controller) against Gateway API (Kong, unmanaged `GatewayClass`); test both a
+   Controller) against Gateway API (LBC ALB, GatewayClass `alb`); test both a
    RESTful service and a gRPC service through each, including the L4-vs-L7 gRPC
    load-balancing gotcha already documented in `../envs/dev/03-application/00-grpc-debug/`.
    → `hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`

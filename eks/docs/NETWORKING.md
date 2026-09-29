@@ -27,7 +27,7 @@ packet-level mechanics (route tables, VPC CNI IP allocation, cross-account ENIs)
 ## 1. Inbound (north-south in)
 
 ```
-Internet → [CloudFront → WAF/Shield] → [ALB/NLB (LBC)] → [API GW (Kong)] → Service
+Internet → [CloudFront → WAF/Shield] → [ALB / NLB (LBC)] → Service
 ```
 
 The **AWS Load Balancer Controller** (`envs/<env>/01-addons/02-aws-load-balancer-controller`) provisions **both** load
@@ -51,62 +51,44 @@ skipping the node-port hop.
 > **Finance/exchange workloads** (FIX, market-data feeds): **NLB** is usually the edge —
 > low latency, static EIP for exchange allowlisting, and preserved source IP.
 
-### Two ingress models — and the hybrid we run
+### Two APIs to the ALB — `Ingress` and Gateway API (both via LBC)
 
-On EKS the "ingress controller" role can be filled two ways:
-
-**A · AWS LBC + ALB** — the controller is *control-plane only*: it watches `Ingress`
-(class `alb`) and programs a real, AWS-managed ALB. Traffic goes **straight to pod IPs**,
-the controller is **not** in the data path.
+The LBC (v3.x) implements **both** the classic `Ingress` API **and** the Kubernetes
+Gateway API — each produces a real AWS-managed **ALB**. The controller is *control-plane
+only* (not in the data path); traffic goes **straight to pod IPs** (`target-type: ip`).
 ```
 Internet → ALB (AWS-managed, public subnet) → pod IP        [2 hops]
-              ▲ LBC programs it (control-plane)
+              ▲ LBC programs it from Ingress OR Gateway/HTTPRoute
 ```
 
-**B · In-cluster proxy (Kong / ingress-nginx)** — the controller **is** the data-plane:
-a proxy pod terminates + routes. It sits behind one LB shared by many routes.
-```
-Internet → NLB/ALB ×1 → proxy pod (Kong/nginx) → ClusterIP → pod   [3 hops]
-                           ▲ controller = the proxy itself
-```
-
-| | A · LBC + ALB | B · in-cluster proxy |
+| | `Ingress` (class `alb`) | Gateway API (GatewayClass `alb`) |
 |---|---|---|
-| Controller | control-plane (programs ALB) | data-plane (proxy pods) |
-| LB count | 1 ALB per `Ingress` (`group.name` to share) | 1 LB → many routes |
-| TLS / WAF | ACM + AWS WAF on the ALB | in-cluster cert + own WAF |
-| L7 features | host/path only | auth, rate-limit, transform, plugins |
-| Scaling / cost | AWS-managed, $/ALB | you scale pods, 1 LB |
-| Portability | AWS-locked | any k8s |
+| Resource | `Ingress` | `Gateway` + `HTTPRoute` / `GRPCRoute` |
+| LBC controllerName | `ingress.k8s.aws/alb` | `gateway.k8s.aws/alb` |
+| Result | one ALB | one ALB per `Gateway` |
+| Ownership | one team owns the Ingress | infra owns `Gateway`, app teams own routes |
+| TLS | ACM auto-discover by host | same (listener hostname → ACM) |
+| Enable | on by default | LBC feature gate `ALBGatewayAPI=true` + Gateway API CRDs v1.6 |
 
-**Hybrid (what this platform runs):** plain `Ingress` uses model A (cheap, simple). When a
-route needs API-gateway features or Gateway API, Kong (`envs/prod/02-platform/05-api-gateway`)
-is used — but **Kong's own proxy Service is fronted by an ALB (LBC)**, so the two models
-chain:
-```
-Internet → ALB (LBC) → Kong proxy pod → Service → pod
-           └ model A ┘  └───────── model B ─────────┘
-           TLS/WAF edge   auth · rate-limit · Gateway API (GRPCRoute/HTTPRoute)
-```
-Rule of thumb: **model A for normal ingress; add Kong (model B behind the ALB) only for
-routes that need gateway logic.** Don't run both as *the* gateway for the same route.
+Both are AWS-native — **no in-cluster proxy**. Prefer `Ingress` for simple single-team
+apps; Gateway API when you want the role split (`Gateway` shared, routes per app) or
+first-class gRPC routing (`GRPCRoute`).
+
+> **No in-cluster L7 proxy ships in this repo.** If you need gateway *logic* the ALB
+> doesn't do (auth, rate-limit, request transform, JWT), add a proxy (Envoy Gateway /
+> ingress-nginx / a mesh) behind the ALB yourself — it is not part of the platform.
 
 **Supporting components:**
 - **DNS:** external-dns (`envs/prod/01-addons/03-external-dns`) → Route 53 records.
 - **TLS:** cert-manager (`envs/<env>/01-addons/04-cert-manager`) → ACM / Let's Encrypt.
 - **WAF:** `envs/<env>/00-infra/07-waf` — attach to an ALB via the Ingress annotation
   `alb.ingress.kubernetes.io/wafv2-acl-arn`.
-- **API management:** Kong (`envs/prod/02-platform/05-api-gateway`) behind the LB — rate limiting, auth,
-  request transform, versioning.
+- **Gateway API:** LBC also serves it (GatewayClass `alb`, controllerName
+  `gateway.k8s.aws/alb`, feature gate `ALBGatewayAPI`) — `Gateway`/`HTTPRoute`/`GRPCRoute`
+  → ALB, same ACM auto-discovery as Ingress.
 
-**Other edge options (beyond ALB/NLB):**
-- **Gateway API** — the successor to `Ingress` (LBC supports it); role-split `Gateway` +
-  `HTTPRoute`, cleaner for multi-team clusters.
+**Other edge options (beyond ALB/NLB):** *(Gateway API is covered above — LBC serves it natively.)*
 - **CloudFront + WAF/Shield** — CDN/edge cache + DDoS, global entry (not yet in IaC).
-- **Kong Gateway API mode** (`envs/prod/02-platform/05-api-gateway`) — the same Kong release can also act as a
-  Gateway API implementation (unmanaged `GatewayClass: kong`, reusing the existing
-  proxy Service — no new LB). Overlaps LBC — pick one as *the* gateway (classic
-  `Ingress` via LBC, or `Gateway`/`HTTPRoute` via Kong).
 - **AWS Global Accelerator** — anycast static IPs + cross-region failover in front of NLB/ALB.
 - **VPC Lattice** — service-to-service networking across VPCs/accounts without a per-service LB.
 - **Internal ALB/NLB (`scheme=internal`) + PrivateLink** — internal-only apps / expose to
@@ -126,7 +108,7 @@ Service → [NetworkPolicy] → [Network Firewall / Kuma zone egress] → [NAT (
 - **Centralized L7 inspection:** two mutually-exclusive options —
   - **AWS Network Firewall** (`enable_network_firewall` in `00-infra/00-network`) — dedicated firewall
     subnets + app-egress route redirect; domain/FQDN allowlists, IPS. **~$865/mo** — prod only.
-  - **Kuma zone egress** (`envs/prod/02-platform/06-service-mesh`) — if the mesh is already in place; policy in-cluster.
+  - **Kuma zone egress** (`envs/prod/02-platform/05-service-mesh`) — if the mesh is already in place; policy in-cluster.
 - **Skip the NAT for AWS APIs:** VPC endpoints (§4) route ECR/S3/Secrets Manager privately —
   cheaper and works on a fully private cluster.
 

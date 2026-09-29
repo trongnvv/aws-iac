@@ -11,7 +11,7 @@ Each env is organised as **three layers**:
 |---|---|---|---|
 | 0 · infra | `envs/<env>/00-infra/00-network … 07-waf` | OpenTofu | VPC, EKS, Karpenter infra, add-on IAM, security, observability, backup, WAF |
 | 1 · add-ons | `envs/<env>/01-addons/*` | helmfile | Karpenter, metrics-server, LBC, ExternalDNS, cert-manager, external-secrets, Kyverno, KEDA, NodeLocal DNS |
-| 2 · platform | `envs/<env>/02-platform/*` | helmfile | Argo CD, kube-prometheus-stack, Velero, Argo Rollouts, Kubecost, Kong, Kuma, Falco |
+| 2 · platform | `envs/<env>/02-platform/*` | helmfile | Argo CD, kube-prometheus-stack, Velero, Argo Rollouts, Kubecost, Kuma, Falco |
 
 **Helm values are hardcoded plain YAML** (`values.yaml` per release) — no `.gotmpl`
 templating and no `tofu output` wiring. This works because every value the add-ons

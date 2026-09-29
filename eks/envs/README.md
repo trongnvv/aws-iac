@@ -42,9 +42,8 @@ enable flag. `dev` ships the small set; `prod` ships everything.
 | 02 | velero | cluster + volume backup to S3 | 06-backup-aws | — | ✅ |
 | 03 | argo-rollouts | progressive delivery (canary/blue-green) | — | — | ✅ |
 | 04 | kubecost | cost visibility per namespace/workload | kubecost IAM | — | ✅ |
-| 05 | api-gateway | Kong — API auth / rate-limit / quota + Gateway API | — | — | ✅ |
-| 06 | service-mesh | Kuma (Kong's OSS mesh) — mTLS, traffic management | — | — | ✅ |
-| 07 | falco | runtime security (syscall detection) | — | — | ✅ |
+| 05 | service-mesh | Kuma — mTLS, traffic management (east-west) | — | — | ✅ |
+| 06 | falco | runtime security (syscall detection) | — | — | ✅ |
 
 ## Add a new system
 `cp -r envs/dev envs/staging`, edit each `00-infra/*/main.tf` (env, cluster_name, CIDR,

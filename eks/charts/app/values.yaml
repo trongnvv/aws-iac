@@ -70,7 +70,7 @@ ingress:
 # ---- Gateway API Gateway ----
 gateway:
   enabled: false
-  gatewayClassName: kong
+  gatewayClassName: alb   # LBC ALB Gateway API (GatewayClass controllerName gateway.k8s.aws/alb)
   annotations: {}
   listeners: []           # raw listeners list
 

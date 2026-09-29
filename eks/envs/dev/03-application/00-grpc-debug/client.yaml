@@ -19,7 +19,7 @@ port:
 env:
   # See README "4 cases": flip SERVER_ADDR / LB_POLICY to change the distribution.
   #   Case 2/3: SERVER_ADDR=dns:///grpc-server-headless.grpc-debug.svc.cluster.local:50051
-  #   Case 4:   ClusterIP addr + a service mesh (Kuma, 02-platform/06)
+  #   Case 4:   ClusterIP addr + a service mesh (Kuma, 02-platform/05)
   - name: SERVER_ADDR
     value: "grpc-server.grpc-debug.svc.cluster.local:50051"
   - name: LB_POLICY
@@ -45,15 +45,21 @@ ingress:
     # (foundation issues the wildcard *.trongnv.space) — keeps values ARN-free.
   rules:
     # external-dns (01-addons/03) creates the Route 53 record for this host -> ALB.
-    - host: grpc-client.trongnv.space
+    # This is the model-A path (ALB Ingress / LBC). Gateway API path = -02 (see httpRoute).
+    - host: grpc-debug-client-01.trongnv.space
       paths:
         - path: /
           pathType: Prefix
           serviceName: grpc-client
           # servicePort omitted -> from `port` (80)
-# For Gateway API instead of the ALB Ingress (needs Kong + Gateway API CRDs v1.3):
+# For Gateway API instead of the ALB Ingress (both land on an ALB via LBC — needs the
+# LBC feature gate ALBGatewayAPI, Gateway API CRDs v1.6, and a GatewayClass "alb"):
 #   ingress: {enabled: false}
+#   gateway:
+#     enabled: true
+#     gatewayClassName: alb
+#     listeners: [{name: http, protocol: HTTP, port: 80, allowedRoutes: {namespaces: {from: Same}}}]
 #   httpRoute:
 #     enabled: true
-#     parentRefs: [{name: kong, namespace: kong}]
+#     parentRefs: [{name: grpc-client}]   # the Gateway above
 #     # servicePort omitted -> from `port` (80)

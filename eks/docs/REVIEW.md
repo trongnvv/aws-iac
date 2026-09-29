@@ -29,8 +29,8 @@ are done; what remains is Medium/Low hardening.
    ACM for ALB-terminated TLS; HTTP-01 suits ingress-nginx.
 6. **Secondary CIDR** is created but unused until the in-cluster `ENIConfig` (custom
    networking) is applied and `AWS_VPC_K8S_CNI_CUSTOM_NETWORK_CFG=true`.
-7. **Kong's Gateway API mode (unmanaged `GatewayClass`) and Kuma haven't been run
-   yet** — first real exercise is `docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`.
+7. **ALB Gateway API (GatewayClass `alb`, LBC v3.5) and Kuma haven't been run yet** —
+   first real exercise is `docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`.
 
 ## Correctness — Low
 - System node group untainted — add `CriticalAddonsOnly` + tolerations.

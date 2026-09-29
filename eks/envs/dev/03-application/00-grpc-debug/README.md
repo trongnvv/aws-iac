@@ -61,7 +61,7 @@ for i in $(seq 1 30); do curl -s localhost:8080/call; echo; done | sort | uniq -
 | **1** | `grpc-server…:50051` (ClusterIP) | `pick_first` | **1 backend** — all 30 hits one pod |
 | **2** | `dns:///grpc-server-headless…:50051` | `pick_first` | still 1 (pick_first picks one resolved IP) |
 | **3** (default) | `dns:///grpc-server-headless…:50051` | `round_robin` | **spread across all 3** — the fix |
-| **4** | ClusterIP (as case 1) | any | per-RPC LB by an **L7 mesh** (Kuma, `02-platform/06`) |
+| **4** | ClusterIP (as case 1) | any | per-RPC LB by an **L7 mesh** (Kuma, `02-platform/05`) |
 
 Switch cases by editing the two env vars in `client.yaml` and re-applying, or live:
 `kubectl -n grpc-debug set env deploy/grpc-client SERVER_ADDR=… LB_POLICY=…`.

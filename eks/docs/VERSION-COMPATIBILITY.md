@@ -30,7 +30,6 @@ upper bound**, so all pinned versions install on 1.36.
 | Velero | `12.2.0` | `>= 1.16.0-0` | ✅ |
 | Argo Rollouts | `2.43.2` | none | ✅ |
 | Kubecost | `2.9.7` | none | ✅ |
-| Kong | `3.4.1` | none | ✅ |
 | Kuma | `2.14.5` | none | ✅ |
 | Falco | `9.2.0` | none | ✅ |
 
@@ -48,20 +47,23 @@ Before cutting a cluster to a new minor, check the **EKS release notes** for tha
 version's removed APIs, then re-run the `helm show chart ... | grep kubeVersion` sweep
 after any chart bump.
 
-## Gateway API ↔ Kong KIC (separate constraint from k8s version)
+## Gateway API ↔ AWS Load Balancer Controller (separate constraint from k8s version)
 
 The Gateway API CRDs are installed manually (see
-`docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`), so their version is gated by
-the **Kong Ingress Controller**, not the Kubernetes version:
+`docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md`). There is **no in-cluster proxy**
+— the LBC itself serves Gateway API and provisions an ALB. So the CRD version is gated by
+the **LBC**, not the Kubernetes version:
 
-| Component | Version | Supports Gateway API |
+| Component | Version | Gateway API |
 |---|---|---|
-| `kong/kong` chart | `3.4.1` | — (bundles the KIC below) |
-| Kong Gateway (appVersion) | `3.9` | — |
-| Kong Ingress Controller (KIC) | `3.5` | **v1.0, v1.1, v1.2, v1.3** |
+| aws-load-balancer-controller (chart / appVersion) | `3.5.0` / `v3.5.0` | conformance **v1.6.0** — requires CRDs **v1.6.0** |
 
-→ **Install Gateway API CRDs at `v1.3`** (`.../releases/download/v1.3.0/standard-install.yaml`).
-Newer Gateway API (v1.4–v1.6) is outside KIC 3.5's tested matrix — the core `v1` routes
-(Gateway/HTTPRoute/GatewayClass/GRPCRoute) may still work since `v1` is backward-compatible,
-but for a prod-shaped lab match the tested version. To use a newer Gateway API, bump the
-Kong chart to one bundling a newer KIC first.
+→ **Install Gateway API CRDs at `v1.6.0`** (`.../releases/download/v1.6.0/standard-install.yaml`) —
+the latest, and exactly what LBC v3.5 tests against.
+
+Enablement + usage:
+- Turn on the LBC feature gate `ALBGatewayAPI=true` (chart values `featureGates`).
+- `GatewayClass` controllerName `gateway.k8s.aws/alb` → each `Gateway` gets an ALB.
+- HTTPRoute/GRPCRoute (L7) → ALB; TCPRoute/UDPRoute (L4) → NLB (don't mix L4+L7 on one Gateway).
+- TLS: ACM cert auto-discovered by listener hostname (same as Ingress). Advanced ALB config
+  via the `LoadBalancerConfiguration` CRD (group `gateway.k8s.aws`).

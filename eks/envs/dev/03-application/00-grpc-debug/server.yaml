@@ -32,21 +32,20 @@ services:
   - name: grpc-server-headless
     clusterIP: None
 
-# Optional — expose gRPC externally via Kong Gateway API (needs Gateway API CRDs v1.3
-# + Kong, 02-platform/05). Then Kong L7-load-balances per-RPC across all 3 backends
-# (the "case 4" fix) instead of the L4 ClusterIP pin. Uncomment to enable:
+# Optional — expose gRPC externally via ALB Gateway API (LBC). The ALB routes gRPC at
+# L7 (GRPCRoute) → per-RPC load-balance across all 3 backends (the "case 4" fix) instead
+# of the L4 ClusterIP pin. Prereqs: LBC feature gate ALBGatewayAPI on, Gateway API CRDs
+# v1.6, and a GatewayClass "alb" (controllerName gateway.k8s.aws/alb). Then:
 # gateway:
 #   enabled: true
-#   gatewayClassName: kong
-#   annotations:
-#     konghq.com/gatewayclass-unmanaged: "true"
+#   gatewayClassName: alb
 #   listeners:
 #     - name: grpc
-#       protocol: HTTP        # Kong terminates; use HTTPS + a cert for real traffic
+#       protocol: HTTP
 #       port: 50051
 #       allowedRoutes: {namespaces: {from: Same}}
 # grpcRoute:
 #   enabled: true
 #   parentRefs:
-#     - {name: grpc-server}
+#     - {name: grpc-server}   # the Gateway above
 #   # servicePort omitted -> from `port` (50051)

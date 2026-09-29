@@ -65,10 +65,10 @@ then `cd envs/<name> && ./deploy.sh`. Details + cost per preset: `docs/DEPLOY.md
 ## Networking (north-south, egress, intra-VPC)
 
 ```
-Inbound:  Internet → [CloudFront → WAF] → [ALB (L7) / NLB (L4), LBC] → [API GW (Kong)] → Service
+Inbound:  Internet → [CloudFront → WAF] → [ALB (L7) / NLB (L4), LBC] → Service
 Outbound: Service → [NetworkPolicy] → [Network Firewall / Kuma egress] → [NAT (static EIP)] → partner
 ```
-- Inbound: `01-addons/02-aws-load-balancer-controller` (ALB *and* NLB) · `01-addons/03-external-dns` · `01-addons/04-cert-manager` · WAF `00-infra/07-waf` · Kong `02-platform/05-api-gateway`.
+- Inbound: `01-addons/02-aws-load-balancer-controller` (ALB *and* NLB; also serves Gateway API via GatewayClass `alb`) · `01-addons/03-external-dns` · `01-addons/04-cert-manager` · WAF `00-infra/07-waf`.
 - Outbound: static egress IP = `00-infra/00-network` output `nat_public_ips` · filtering `01-addons/07-network-policy` · inspection `enable_network_firewall` / Kuma egress.
 
 **ALB vs NLB, egress options, VPC endpoints, subnet tiers — full design guide:
@@ -122,12 +122,11 @@ Some add-ons overlap — pick one per cluster:
 - **Metrics backend:** self-host `kube-prometheus-stack` (`02-platform/01-observability`)
   **or** AMP+AMG (`00-infra/05-observability-aws`) — not both. If using AMP, point
   Prometheus `remoteWrite` at it.
-- **North-south API:** Kong (`02-platform/05-api-gateway`) has two modes — classic
-  reverse-proxy behind the ALB, or Gateway API/ingress-controller (unmanaged
-  `GatewayClass`, reusing the same proxy Service — no new LB) — pick one style per route,
-  don't run both for the same workload. Kuma (`02-platform/06-service-mesh`) is east-west
-  only (mesh mTLS) and never overlaps here.
-- **Runtime security:** Falco (`02-platform/07-falco`) **or** GuardDuty runtime
+- **North-south:** the ALB (LBC) is the single entry — from `Ingress` (class `alb`) **or**
+  Gateway API (GatewayClass `alb`, feature gate `ALBGatewayAPI`); both provision an ALB, no
+  in-cluster proxy. Kuma (`02-platform/05-service-mesh`) is east-west only (mesh mTLS) and
+  never overlaps here.
+- **Runtime security:** Falco (`02-platform/06-falco`) **or** GuardDuty runtime
   monitoring — not both.
 - **Storage:** EBS CSI is a managed add-on (`enable_ebs_csi`, on by default) + a `gp3`
   default StorageClass (`01-addons/00-storageclass`, a helmfile release via charts/app).

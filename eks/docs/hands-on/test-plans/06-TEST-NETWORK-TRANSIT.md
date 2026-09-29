@@ -80,7 +80,7 @@ via the TGW, not because of any DNS trick.
 
 ## 2. Case B — VPC Lattice (L7, no route tables)
 Install the [AWS Gateway API Controller for VPC Lattice](https://github.com/aws/aws-application-networking-k8s)
-in the `dev` cluster — same Gateway API pattern as Kong in
+in the `dev` cluster — same Gateway API pattern as the ALB in
 `01-TEST-INGRESS-GATEWAY-API.md`, different `GatewayClass`:
 ```bash
 kubectl create namespace aws-application-networking-system
@@ -156,7 +156,7 @@ curl "http://$SVC_DNS"
 | Exposure unit | A routable IP (NLB, pod IP) | A named **Service** (DNS name), via Gateway API |
 | Blast radius | Whole subnet reachable (SG is the only gate) | Only the routes/services you explicitly export |
 | Cost | `$0.05/h`/attachment + `$0.02/GB` | `$0.025/h`/service + `$0.025/GB` + requests |
-| Fits this repo's theme | Same shape as the partner/exchange NAT pattern in `docs/NETWORKING.md` | Same shape as Kong's Gateway API mode — different `GatewayClass`, same Kubernetes API |
+| Fits this repo's theme | Same shape as the partner/exchange NAT pattern in `docs/NETWORKING.md` | Same shape as the ALB Gateway API — different `GatewayClass`, same Kubernetes API |
 
 ## 4. Cleanup — VPC Lattice
 ```bash
