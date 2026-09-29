@@ -7,6 +7,10 @@
 #   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" server.yaml
 image: "trongnv138/grpc-conn-debug-server:v1"
 replicas: 3
+# amd64 image -> pin off the arm64 managed node group so Karpenter provisions an
+# amd64 node (NodePool is amd64-only). Remove once the image is multi-arch.
+nodeSelector:
+  kubernetes.io/arch: amd64
 port:
   name: grpc
   number: 50051

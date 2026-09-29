@@ -9,15 +9,20 @@ customValues:
       template:
         spec:
           requirements:
+            # amd64-only: the grpc-debug images on Docker Hub are amd64 (not multi-arch).
+            # Trade-off: loses Graviton (~20% cheaper). Switch back to ["amd64","arm64"]
+            # once images are multi-arch.
             - key: kubernetes.io/arch
               operator: In
-              values: ["amd64", "arm64"]
+              values: ["amd64"]
             - key: karpenter.sh/capacity-type
               operator: In
               values: ["spot", "on-demand"]
+            # t-family included: burstable (t3/t3a) is cheapest for the idle/bursty lab
+            # workload. Drop "t" for steady high-CPU load (credits throttle then).
             - key: karpenter.k8s.aws/instance-category
               operator: In
-              values: ["c", "m", "r"]
+              values: ["t", "c", "m", "r"]
           nodeClassRef:
             group: karpenter.k8s.aws
             kind: EC2NodeClass

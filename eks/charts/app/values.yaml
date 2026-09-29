@@ -35,6 +35,9 @@ resources:
     memory: 128Mi
 
 podSecurityContext: {}
+nodeSelector: {}          # e.g. {kubernetes.io/arch: amd64} to pin off an arm64 MNG
+affinity: {}
+tolerations: []
 securityContext:
   runAsNonRoot: true
   runAsUser: 65532        # distroless :nonroot uid — numeric so kubelet can verify non-root
