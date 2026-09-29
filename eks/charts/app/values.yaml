@@ -72,6 +72,7 @@ gateway:
   enabled: false
   gatewayClassName: alb   # LBC ALB Gateway API (GatewayClass controllerName gateway.k8s.aws/alb)
   annotations: {}
+  infrastructure: {}      # e.g. {parametersRef: {group: gateway.k8s.aws, kind: LoadBalancerConfiguration, name: ...}}
   listeners: []           # raw listeners list
 
 # ---- Gateway API HTTPRoute ----

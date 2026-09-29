@@ -1,5 +1,10 @@
 provider: aws
 policy: sync
+# Watch both classic Ingress (-01) and Gateway API HTTPRoutes (-02) so records are
+# created for either exposure style.
+sources:
+  - ingress
+  - gateway-httproute
 # txtOwnerId distinguishes this env's records from prod's in the SHARED zone —
 # external-dns only touches records tagged with its owner, so dev/prod never fight.
 txtOwnerId: eks-dev

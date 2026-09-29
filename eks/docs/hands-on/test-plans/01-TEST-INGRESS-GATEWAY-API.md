@@ -13,9 +13,14 @@ the resource model (single `Ingress` vs role-split `Gateway`+route) and how each
 - **Gateway API enabled on the LBC** (cases B/D): feature gate `ALBGatewayAPI=true` in the
   LBC chart values (`envs/<env>/01-addons/02-aws-load-balancer-controller/values.yaml`:
   `featureGates: {ALBGatewayAPI: true}`), then `helmfile apply`.
-- **Gateway API CRDs v1.6.0** — matches LBC v3.5 (conformance v1.6.0):
+- **Gateway API CRDs — TWO sets** (LBC needs both):
   ```bash
-  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+  # 1. upstream Gateway API (gateway.networking.k8s.io) — GatewayClass/Gateway/HTTPRoute/GRPCRoute
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+  # 2. LBC CRDs (gateway.k8s.aws) — LoadBalancerConfiguration/TargetGroupConfiguration/ListenerRuleConfiguration
+  #    use the tag matching the controller (v3.5.0), NOT refs/heads/main; skip if the chart already installed them
+  kubectl get crd loadbalancerconfigurations.gateway.k8s.aws >/dev/null 2>&1 \
+    || kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/config/crd/gateway/gateway-crds.yaml
   ```
 - A domain + ACM cert from `../../../../foundation/01-dns` for real TLS; otherwise
   port-forward / `curl --resolve` against the ALB hostname.

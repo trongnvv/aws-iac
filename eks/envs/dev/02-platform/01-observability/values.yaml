@@ -1,0 +1,32 @@
+# Expose the stack UIs via ALB Ingress (LBC) + external-dns Route 53 records. One shared
+# ALB for both hosts (annotation group.name). TLS = wildcard *.trongnv.space, auto-discovered
+# from ACM by host. HTTP→HTTPS redirect on.
+#
+# ⚠️ Grafana has a login; Prometheus has **no auth** — internet-facing is lab-only. For real
+# use, set scheme=internal (reach via VPN/bastion) or put auth in front, or drop the
+# Prometheus ingress.
+grafana:
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: dev-monitoring
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: '443'
+    hosts:
+      - grafana.trongnv.space
+
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: dev-monitoring
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: '443'
+    hosts:
+      - prometheus.trongnv.space

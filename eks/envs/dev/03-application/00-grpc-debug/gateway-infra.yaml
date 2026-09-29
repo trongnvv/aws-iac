@@ -1,0 +1,22 @@
+# Shared ALB Gateway API infra for the grpc-debug namespace — referenced by any release
+# that exposes a Service via Gateway API (client -02, server, ...). Its own release so apps
+# reuse it by name instead of each re-declaring these. Rendered raw via charts/app
+# customValues (the chart doesn't template these kinds).
+customValues:
+  # Cluster-scoped GatewayClass — one per cluster. Move to 01-addons (next to the LBC) if
+  # namespaces beyond grpc-debug start using the ALB Gateway API.
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: GatewayClass
+    metadata:
+      name: alb
+    spec:
+      controllerName: gateway.k8s.aws/alb
+
+  # LBC ALB attributes for this namespace — Gateways reference it via infrastructure.parametersRef.
+  - apiVersion: gateway.k8s.aws/v1
+    kind: LoadBalancerConfiguration
+    metadata:
+      name: internet-facing
+      namespace: grpc-debug
+    spec:
+      scheme: internet-facing

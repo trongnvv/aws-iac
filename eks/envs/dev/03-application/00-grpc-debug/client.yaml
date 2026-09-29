@@ -52,14 +52,34 @@ ingress:
           pathType: Prefix
           serviceName: grpc-client
           # servicePort omitted -> from `port` (80)
-# For Gateway API instead of the ALB Ingress (both land on an ALB via LBC — needs the
-# LBC feature gate ALBGatewayAPI, Gateway API CRDs v1.6, and a GatewayClass "alb"):
-#   ingress: {enabled: false}
-#   gateway:
-#     enabled: true
-#     gatewayClassName: alb
-#     listeners: [{name: http, protocol: HTTP, port: 80, allowedRoutes: {namespaces: {from: Same}}}]
-#   httpRoute:
-#     enabled: true
-#     parentRefs: [{name: grpc-client}]   # the Gateway above
-#     # servicePort omitted -> from `port` (80)
+# --- "-02" path: SAME client, also exposed via ALB Gateway API (in addition to -01 above) ---
+# Needs LBC feature gate ALBGatewayAPI + Gateway API CRDs v1.6 (see test-plan 01 §0).
+gateway:
+  enabled: true
+  gatewayClassName: alb
+  infrastructure:
+    parametersRef:
+      group: gateway.k8s.aws
+      kind: LoadBalancerConfiguration
+      name: internet-facing
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: grpc-debug-client-02.trongnv.space
+      allowedRoutes:
+        namespaces:
+          from: Same
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: grpc-client        # the Gateway above (= app name)
+  hostnames:
+    - grpc-debug-client-02.trongnv.space
+  rules:
+    - backendRefs:
+        - name: grpc-client    # reuse this release's Service
+          port: 80
+# GatewayClass "alb" + LoadBalancerConfiguration "internet-facing" (referenced above) are
+# SHARED infra — defined once in the `gateway-infra` release (gateway-infra.yaml), reused by
+# the server and any other app that exposes via the ALB Gateway API.

@@ -5,3 +5,8 @@ region: ap-southeast-1
 serviceAccount:
   create: true
   name: aws-load-balancer-controller
+# Enable the ALB Gateway API controller (GatewayClass controllerName gateway.k8s.aws/alb).
+# Needs the Gateway API CRDs + LBC gateway CRDs installed — see
+# docs/hands-on/test-plans/01-TEST-INGRESS-GATEWAY-API.md §0.
+featureGates:
+  ALBGatewayAPI: true

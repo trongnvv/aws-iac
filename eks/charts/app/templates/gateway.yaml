@@ -11,6 +11,10 @@ metadata:
   {{- end }}
 spec:
   gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+  {{- with .Values.gateway.infrastructure }}
+  infrastructure:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   listeners:
     {{- toYaml .Values.gateway.listeners | nindent 4 }}
 {{- end }}
