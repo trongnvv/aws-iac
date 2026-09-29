@@ -5,12 +5,12 @@
 # securityContext come from chart defaults.
 # Set the ECR account id once:
 #   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" client.yaml
-image: "ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/client:v1"
+image: "trongnv138/grpc-conn-debug-client:v1"
 replicas: 1
 port:
   name: http
-  number: 8080        # containerPort
-  servicePort: 80     # Service + Ingress backend port
+  number: 8080 # containerPort
+  servicePort: 80 # Service + Ingress backend port
   healthPath: /healthz
 env:
   # See README "4 cases": flip SERVER_ADDR / LB_POLICY to change the distribution.
@@ -27,19 +27,22 @@ env:
   - name: INTERVAL
     value: "3s"
 services:
-  - name: grpc-client   # port omitted -> 80 (servicePort) / targetPort http
+  - name: grpc-client # port omitted -> 80 (servicePort) / targetPort http
 ingress:
   enabled: true
   className: alb
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip # ALB -> pod IP directly (VPC CNI)
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443" # HTTP -> HTTPS
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    # No certificate-arn: LBC auto-discovers the ACM cert matching the host
+    # (foundation issues the wildcard *.trongnv.space) — keeps values ARN-free.
   rules:
-    # host-less: reach it via the ALB DNS name directly (dev has no external-dns).
-    # For a real domain, add `host: grpc-client.<your-domain>` and run external-dns.
-    - paths:
+    # external-dns (01-addons/03) creates the Route 53 record for this host -> ALB.
+    - host: grpc-client.trongnv.space
+      paths:
         - path: /
           pathType: Prefix
           serviceName: grpc-client

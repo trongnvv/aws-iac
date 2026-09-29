@@ -1,0 +1,15 @@
+# ExternalDNS — syncs Ingress/Service hostnames to Route 53 (zone trongnv.space).
+# IAM (Route 53) via Pod Identity from 00-infra/03-addon-iam (SA external-dns).
+repositories:
+  - name: external-dns
+    url: https://kubernetes-sigs.github.io/external-dns/
+
+releases:
+  - name: external-dns
+    namespace: external-dns
+    createNamespace: true
+    chart: external-dns/external-dns
+    version: "1.22.0"
+    wait: true
+    values:
+      - values.yaml

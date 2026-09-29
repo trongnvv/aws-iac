@@ -2,7 +2,7 @@ provider: aws
 policy: sync
 txtOwnerId: eks-prod
 domainFilters:
-  - example.com
+  - trongnv.space
 serviceAccount:
   create: true
   name: external-dns

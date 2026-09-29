@@ -9,5 +9,5 @@ variable "profile" {
 # Registered domain managed at the registrar; the zone is delegated to Route 53.
 variable "domain" {
   type    = string
-  default = "example.com"
+  default = "trongnv.space"
 }

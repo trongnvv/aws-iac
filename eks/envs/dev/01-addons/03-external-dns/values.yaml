@@ -1,0 +1,10 @@
+provider: aws
+policy: sync
+# txtOwnerId distinguishes this env's records from prod's in the SHARED zone —
+# external-dns only touches records tagged with its owner, so dev/prod never fight.
+txtOwnerId: eks-dev
+domainFilters:
+  - trongnv.space
+serviceAccount:
+  create: true
+  name: external-dns

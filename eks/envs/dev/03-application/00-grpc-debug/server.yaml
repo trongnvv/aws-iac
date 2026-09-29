@@ -5,12 +5,12 @@
 # the auto gRPC health probe. Probes, resources and securityContext come from chart defaults.
 # Set the ECR account id once:
 #   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" server.yaml
-image: "ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/grpc-conn-debug/server:v1"
+image: "trongnv138/grpc-conn-debug-server:v1"
 replicas: 3
 port:
   name: grpc
   number: 50051
-  appProtocol: grpc   # -> gRPC probe + Service appProtocol=grpc
+  appProtocol: grpc # -> gRPC probe + Service appProtocol=grpc
 env:
   - name: LISTEN_ADDR
     value: ":50051"
