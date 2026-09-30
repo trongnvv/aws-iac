@@ -130,6 +130,48 @@ first-class gRPC routing (`GRPCRoute`).
 - **Internal ALB/NLB (`scheme=internal`) + PrivateLink** — internal-only apps / expose to
   other VPCs/accounts privately.
 
+### Exposure tiers — public / IP-restricted / internal
+
+A common pattern: **one app / one Service, three front doors** — each a separate `Ingress`
+(or `Gateway`), differing only in scheme + restriction. They all point to the same backend.
+
+| Domain | ALB scheme | Restriction | Key annotation(s) |
+|---|---|---|---|
+| `x.example.com` | `internet-facing` | none (all clients) | — (optionally WAF baseline) |
+| `x-restrict.example.com` | `internet-facing` | source-IP allowlist | `inbound-cidrs` **or** WAF IPSet |
+| `x-private.example.com` | **`internal`** | VPC / VPN only | `scheme: internal` |
+
+```yaml
+# 1) public — internet-facing, open
+alb.ingress.kubernetes.io/scheme: internet-facing
+alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+alb.ingress.kubernetes.io/target-type: ip
+# alb.ingress.kubernetes.io/wafv2-acl-arn: <arn>          # optional baseline WAF
+
+# 2) restricted — internet-facing + source-IP allowlist
+alb.ingress.kubernetes.io/scheme: internet-facing
+alb.ingress.kubernetes.io/inbound-cidrs: "203.0.113.0/24,198.51.100.7/32"   # SG-level (whole ALB)
+# or: alb.ingress.kubernetes.io/wafv2-acl-arn: <arn>      # WAF IPSet (per-host rules, logging)
+
+# 3) private — internal ALB (private IPs only)
+alb.ingress.kubernetes.io/scheme: internal
+alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+alb.ingress.kubernetes.io/target-type: ip
+```
+
+Notes:
+- **DNS:** the two public hosts go in a Route 53 **public** hosted zone; the private host goes
+  in a **private** hosted zone (associated with the VPC) → resolves to the internal ALB's
+  private IPs, **only inside the VPC**. For VPN clients to resolve it, add a Route 53 Resolver
+  inbound endpoint (or have the VPN push the VPC DNS). external-dns handles both zones.
+- **Sharing ALBs:** same-scheme hosts can share one ALB via `group.name`. So public + restricted
+  can share one internet-facing ALB **if** the restriction is WAF (per-host rules) — `inbound-cidrs`
+  is SG-level (whole ALB), so it forces a dedicated ALB. The internal host always needs its own ALB.
+- **Gateway API equivalent:** scheme / inbound CIDRs / WAF live in the `LoadBalancerConfiguration`
+  (one ALB per `Gateway`) → three `Gateway`s, routes all pointing at the same Service.
+- **In this repo:** the `app` chart renders one Ingress per release → use **three releases**
+  (public / restrict / private) pointing at the same Service, or extend the chart to a list of ingresses.
+
 ---
 
 ## 2. Outbound (north-south out / egress)
