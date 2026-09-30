@@ -1,10 +1,10 @@
-# Expose the stack UIs via ALB Ingress (LBC) + external-dns Route 53 records. One shared
-# ALB for both hosts (annotation group.name). TLS = wildcard *.trongnv.space, auto-discovered
-# from ACM by host. HTTP→HTTPS redirect on.
+# Expose the stack UIs via ALB Ingress (LBC) + external-dns Route 53 records. One shared ALB
+# for all hosts (annotation group.name). TLS = wildcard *.trongnv.space, auto-discovered from
+# ACM by host. HTTPS-only (no HTTP:80 listener). Per-UI healthcheck-path so ALB targets stay healthy
+# (Grafana `/` returns 302 → the default "/" health check would mark the target unhealthy → 503).
 #
-# ⚠️ Grafana has a login; Prometheus has **no auth** — internet-facing is lab-only. For real
-# use, set scheme=internal (reach via VPN/bastion) or put auth in front, or drop the
-# Prometheus ingress.
+# ⚠️ Grafana has a login; Prometheus & Alertmanager have **no auth** — internet-facing is
+# lab-only. For real use set scheme=internal (VPN/bastion) or put auth in front.
 grafana:
   ingress:
     enabled: true
@@ -13,8 +13,8 @@ grafana:
       alb.ingress.kubernetes.io/scheme: internet-facing
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/group.name: dev-monitoring
-      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
-      alb.ingress.kubernetes.io/ssl-redirect: '443'
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/healthcheck-path: /api/health
     hosts:
       - grafana.trongnv.space
 
@@ -26,7 +26,22 @@ prometheus:
       alb.ingress.kubernetes.io/scheme: internet-facing
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/group.name: dev-monitoring
-      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
-      alb.ingress.kubernetes.io/ssl-redirect: '443'
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+    pathType: Prefix   # ALB: Prefix "/" -> "/*" matches sub-paths; ImplementationSpecific "/" only matches exact root -> 404
     hosts:
       - prometheus.trongnv.space
+
+alertmanager:
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: dev-monitoring
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/healthcheck-path: /-/healthy
+    pathType: Prefix
+    hosts:
+      - alertmanager.trongnv.space

@@ -38,8 +38,7 @@ ingress:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip # ALB -> pod IP directly (VPC CNI)
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
-    alb.ingress.kubernetes.io/ssl-redirect: "443" # HTTP -> HTTPS
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'  # HTTPS only, no port 80
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
     # No certificate-arn: LBC auto-discovers the ACM cert matching the host
     # (foundation issues the wildcard *.trongnv.space) — keeps values ARN-free.
