@@ -13,15 +13,15 @@ the resource model (single `Ingress` vs role-split `Gateway`+route) and how each
 - **Gateway API enabled on the LBC** (cases B/D): feature gate `ALBGatewayAPI=true` in the
   LBC chart values (`envs/<env>/01-addons/02-aws-load-balancer-controller/values.yaml`:
   `featureGates: {ALBGatewayAPI: true}`), then `helmfile apply`.
-- **Gateway API CRDs — TWO sets** (LBC needs both):
-  ```bash
-  # 1. upstream Gateway API (gateway.networking.k8s.io) — GatewayClass/Gateway/HTTPRoute/GRPCRoute
-  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
-  # 2. LBC CRDs (gateway.k8s.aws) — LoadBalancerConfiguration/TargetGroupConfiguration/ListenerRuleConfiguration
-  #    use the tag matching the controller (v3.5.0), NOT refs/heads/main; skip if the chart already installed them
-  kubectl get crd loadbalancerconfigurations.gateway.k8s.aws >/dev/null 2>&1 \
-    || kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/config/crd/gateway/gateway-crds.yaml
-  ```
+- **Gateway API CRDs — two groups, only ONE is installed by hand:**
+  - **Upstream Gateway API** (`gateway.networking.k8s.io`: GatewayClass/Gateway/HTTPRoute/GRPCRoute)
+    — not bundled anywhere; `envs/<env>/deploy.sh` installs it (server-side, in the wire-kubeconfig
+    step), or standalone:
+    ```bash
+    kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+    ```
+  - **LBC CRDs** (`gateway.k8s.aws`: LoadBalancerConfiguration/TargetGroupConfiguration/ListenerRuleConfiguration)
+    — **ship with the LBC Helm chart** (`01-addons/02`), created on first `helmfile apply`. No separate step.
 - A domain + ACM cert from `../../../../foundation/01-dns` for real TLS; otherwise
   port-forward / `curl --resolve` against the ALB hostname.
 - REST backend: `traefik/whoami` (public, multi-arch — no ECR push needed).
@@ -197,4 +197,89 @@ kubectl -n grpc-debug delete grpcroute grpc-server; kubectl -n grpc-debug delete
 kubectl delete loadbalancerconfiguration internet-facing
 kubectl delete gatewayclass alb
 kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/standard-install.yaml
+```
+
+---
+
+## Appendix — how the AWS Load Balancer Controller maps to AWS
+
+Reference for the two paths above. Applies to LBC v3.5 (Gateway API GA since v3.0.0, Mar 2026).
+
+### A1. How the LBC works (Ingress / Service)
+The LBC runs in the cluster, watches Kubernetes resources, and calls AWS APIs to create/manage ALBs & NLBs.
+
+Resource → AWS:
+- `Ingress` (ingressClass `alb`) → **ALB** (L7). Rules/paths → listener rules; backend Service → target group.
+- `Service type: LoadBalancer` (`loadBalancerClass: service.k8s.aws/nlb`, or annotation `service.beta.kubernetes.io/aws-load-balancer-type: external`) → **NLB** (L4).
+- CRD `TargetGroupBinding` → bind a Service to a **pre-existing** target group (LB owned by Terraform / another team); LBC only syncs targets.
+
+Reconcile loop: watch Ingress/Service/EndpointSlices → build a model (LB, listeners, rules, target groups, SGs) → diff vs real AWS state → call ELBv2/EC2 APIs → register/deregister targets as pods change.
+
+Target type:
+- `instance`: target = node:NodePort, traffic via kube-proxy (extra hop, loses source IP unless configured).
+- `ip`: target = **pod IP directly** (needs the VPC CNI; pod IPs routable in the VPC). No NodePort hop, lower latency, per-pod health checks.
+
+Supporting pieces: IAM via IRSA / Pod Identity; subnet discovery via tags `kubernetes.io/role/elb` (public) / `kubernetes.io/role/internal-elb` (internal); a mutating webhook injects a **pod readiness gate** (a pod is Ready only once its target is healthy on the LB → no traffic drop during rollout); `IngressGroup` (`group.name`) lets many Ingresses share one ALB.
+
+Traffic (ip mode): `Client → ALB/NLB → pod IP (ENI in the VPC)` — not via kube-proxy.
+
+> Not usable on-prem (depends on AWS APIs + the VPC). On-prem equivalent: MetalLB / Cilium LB IPAM (L4) + an ingress controller like NGINX (L7).
+
+### A2. LBC with Gateway API
+Same controller, same reconcile loop — the input is Gateway API resources instead of Ingress + annotations.
+
+Resource → AWS:
+- `GatewayClass` `controllerName`: `gateway.k8s.aws/alb` → ALB (L7); `gateway.k8s.aws/nlb` → NLB (L4).
+- `Gateway` → one ALB or NLB; each `listeners[]` → a listener; the LB DNS lands in `status.addresses`.
+- `HTTPRoute`/`GRPCRoute` → ALB; `TCPRoute`/`UDPRoute`/`TLSRoute` → NLB. Matches/filters → listener rules; `backendRefs` → target groups.
+
+Config via CRDs (validated at apply, unlike JSON-in-annotations):
+- `LoadBalancerConfiguration` — scheme, subnets, SGs… attached to Gateway/GatewayClass.
+- `TargetGroupConfiguration` — target type, health check, attributes, per Service.
+- `ListenerRuleConfiguration` — ALB-specific actions/conditions the spec lacks (e.g. OIDC/Cognito auth).
+
+Vs Ingress: **role split** — the platform team owns GatewayClass/Gateway (the LB), app teams write Routes in their own namespace; cross-namespace via `allowedRoutes` + `ReferenceGrant` (no IngressGroup needed). Many Routes on one Gateway share one LB. IAM, subnet discovery, target type, readiness gate — unchanged.
+
+Notes: install the upstream Gateway API CRDs first; enable feature gate `ALBGatewayAPI` / `NLBGatewayAPI` as needed. Don't confuse with the **AWS Gateway API Controller (VPC Lattice)** — a separate controller for east-west service-to-service; the LBC does north-south via ALB/NLB.
+
+### A3. ALB vs NLB object model
+Both are ELBv2, same tree: `Load Balancer → Listener → (Rule) → Target Group → Target`.
+
+**ALB (L7, proxy):**
+- LB: nodes with an ENI per AZ; auto-scales so IPs change → use the DNS name. Has a **Security Group**; integrates WAF/Shield.
+- Listener: HTTP/HTTPS; HTTPS holds ACM certs (multiple via SNI) + SSL policy.
+- Listener Rule (ALB's core), priority-ordered: *conditions* (host, path, header, method, query, source IP); *actions* (`forward` to one/many weighted TGs, `redirect`, `fixed-response`, `authenticate-oidc/cognito`); always a **default action**.
+- Target Group: type `instance`/`ip`/`lambda`; HTTP/HTTPS/gRPC; health check + attributes (deregistration delay, stickiness, slow start, algorithm: round-robin / least-outstanding-requests).
+- Behavior: terminates the connection, opens a new one to the backend; client IP via `X-Forwarded-For` (network source IP = the ALB node).
+
+**NLB (L4, pass-through):**
+- LB: **static IP per AZ** (assignable EIP); cross-zone off by default; SG supported (enabled at creation).
+- Listener: TCP / UDP / TCP_UDP / TLS (TLS terminates with ACM).
+- **No rules** — each listener just default-forwards to one TG.
+- Target Group: type `instance`/`ip`/`alb` (NLB in front of an ALB); health check TCP/HTTP/HTTPS; attributes (client IP preservation, proxy protocol v2, deregistration delay).
+- Behavior: flow-hash (a flow always hits the same target); preserves client IP; lowest latency.
+
+**In short:** ALB = rich L7 routing; NLB = static IP, client-IP preservation, plain L4.
+
+### A4. What each Gateway API resource creates in AWS
+
+| K8s resource | What it creates in AWS |
+|---|---|
+| `GatewayClass` | **Nothing** — just selects the alb/nlb controller. |
+| `LoadBalancerConfiguration` | **No own object** — LB attributes: scheme, subnets, SG, IP type, access logs, deletion protection (listener cert / SSL policy too; field names vary by version). |
+| `Gateway` | **Load Balancer** + **Listener** (one per port; same port + different hostname → one listener with SNI certs) + **Security Groups** LBC manages (frontend SG on the LB, backend SG + inbound rule to nodes/pods) + a default action (usually fixed-response 404). |
+| `HTTPRoute` / `GRPCRoute` | **Listener Rule** on the listener the `parentRefs`/`sectionName` points to. `hostnames` + `matches` → conditions; `backendRefs` → **Target Group** (one per Service:port; weights → weighted forward); `RequestRedirect` → redirect action. |
+| `TCPRoute` / `UDPRoute` / `TLSRoute` | **Target Group** as the NLB listener's default forward. No rules. |
+| `TargetGroupConfiguration` | **No own object** — sets a Service's TG attributes: target type, health check, stickiness, deregistration delay, proxy protocol. |
+| `ListenerRuleConfiguration` | **No own object** — adds actions/conditions to the rule generated from an HTTPRoute (OIDC auth, source-IP…), attached via a filter `ExtensionRef`. |
+| `Service` / `EndpointSlice` | **Register/deregister Targets** (pod IP or node:NodePort) in the TG. LBC uses TargetGroupBinding internally. |
+| `ReferenceGrant` | **Nothing in AWS** — a K8s-side permission only. |
+
+Quick mnemonic:
+```
+Gateway   → LB + Listener + SG
+Route     → Rule + Target Group
+Service   → Targets
+*Configuration                  → just attributes of the objects above
+GatewayClass / ReferenceGrant   → K8s-side meaning only
 ```

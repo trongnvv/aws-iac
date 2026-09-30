@@ -5,6 +5,7 @@ policy: sync
 sources:
   - ingress
   - gateway-httproute
+  - gateway-grpcroute
 # txtOwnerId distinguishes this env's records from prod's in the SHARED zone —
 # external-dns only touches records tagged with its owner, so dev/prod never fight.
 txtOwnerId: eks-dev

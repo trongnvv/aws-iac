@@ -15,6 +15,7 @@ export GODEBUG="${GODEBUG:+$GODEBUG,}http2client=0"   # tofu HTTP/2 provider dow
 cd "$(dirname "$0")"
 REGION=ap-southeast-1
 CLUSTER=eks-prod
+GWAPI_VERSION=v1.6.0   # upstream Gateway API CRDs (matches LBC v3.5 conformance)
 
 LAYER="${1:-all}"
 case "$LAYER" in
@@ -41,6 +42,13 @@ fi
 if run 01-addons || run 02-platform; then
   echo "== wire kubeconfig =="
   aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
+
+  # Upstream Gateway API CRDs (gateway.networking.k8s.io: GatewayClass/Gateway/HTTPRoute/
+  # GRPCRoute) — applied before the addons so the LBC starts with them present. The LBC's
+  # OWN gateway.k8s.aws CRDs (LoadBalancerConfiguration/...) ship with the LBC chart, so no
+  # separate apply is needed here. Idempotent (server-side apply).
+  echo "== Gateway API CRDs (${GWAPI_VERSION}) =="
+  kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GWAPI_VERSION}/standard-install.yaml"
 fi
 
 if run 01-addons; then

@@ -8,6 +8,8 @@ releases:
     namespace: grpc-debug
     createNamespace: true
     chart: ../../../../charts/app
+    needs:
+      - grpc-debug/gateway-infra   # GatewayClass + LoadBalancerConfiguration for the server's GRPCRoute
     values:
       - server.yaml
 

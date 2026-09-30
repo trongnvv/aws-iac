@@ -32,20 +32,54 @@ services:
   - name: grpc-server-headless
     clusterIP: None
 
-# Optional — expose gRPC externally via ALB Gateway API (LBC). The ALB routes gRPC at
-# L7 (GRPCRoute) → per-RPC load-balance across all 3 backends (the "case 4" fix) instead
-# of the L4 ClusterIP pin. Prereqs: LBC feature gate ALBGatewayAPI on, Gateway API CRDs
-# v1.6, and a GatewayClass "alb" (controllerName gateway.k8s.aws/alb). Then:
-# gateway:
-#   enabled: true
-#   gatewayClassName: alb
-#   listeners:
-#     - name: grpc
-#       protocol: HTTP
-#       port: 50051
-#       allowedRoutes: {namespaces: {from: Same}}
-# grpcRoute:
-#   enabled: true
-#   parentRefs:
-#     - {name: grpc-server}   # the Gateway above
-#   # servicePort omitted -> from `port` (50051)
+# Two external exposures of the gRPC server (mirrors the client -01/-02), both ALB/LBC:
+#   -01 = classic Ingress   -02 = Gateway API GRPCRoute
+# gRPC over an ALB needs HTTPS (ALPN h2); LBC auto-discovers the *.trongnv.space ACM cert by host.
+
+# --- -01: classic ALB Ingress. gRPC via backend-protocol-version=GRPC + HTTPS ---
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol-version: GRPC   # gRPC target group
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'  # HTTPS only (gRPC needs ALPN h2)
+    # no certificate-arn: LBC auto-discovers the *.trongnv.space ACM cert by host
+  rules:
+    - host: grpc-debug-server-01.trongnv.space
+      paths:
+        - path: /
+          pathType: Prefix
+          serviceName: grpc-server
+          servicePort: 50051
+
+# --- -02: ALB Gateway API GRPCRoute — reuses the shared gateway-infra ---
+gateway:
+  enabled: true
+  gatewayClassName: alb
+  infrastructure:
+    parametersRef:
+      group: gateway.k8s.aws
+      kind: LoadBalancerConfiguration
+      name: internet-facing
+  listeners:
+    - name: grpc
+      protocol: HTTPS
+      port: 443
+      hostname: grpc-debug-server-02.trongnv.space
+      tls:
+        mode: Terminate      # LBC attaches the ACM cert matching the hostname (no certificateRefs needed)
+      allowedRoutes:
+        namespaces:
+          from: Same
+grpcRoute:
+  enabled: true
+  parentRefs:
+    - name: grpc-server        # the Gateway above (= app name)
+  hostnames:
+    - grpc-debug-server-02.trongnv.space
+  rules:
+    - backendRefs:
+        - name: grpc-server    # ClusterIP Service on 50051 (appProtocol: grpc)
+          port: 50051
