@@ -88,3 +88,19 @@ httpRoute:
 # GatewayClass "alb" + LoadBalancerConfiguration "internet-facing" (referenced above) are
 # SHARED infra — defined once in the `gateway-infra` release (gateway-infra.yaml), reused by
 # the server and any other app that exposes via the ALB Gateway API.
+
+# Gateway API defaults the ALB target group to `instance` (needs a NodePort/LB Service). Our
+# Service is ClusterIP → force `ip` targets (pod IPs) via a TargetGroupConfiguration.
+customValues:
+  - apiVersion: gateway.k8s.aws/v1
+    kind: TargetGroupConfiguration
+    metadata:
+      name: grpc-client
+      namespace: grpc-debug
+    spec:
+      targetReference:
+        group: ""
+        kind: Service
+        name: grpc-client
+      defaultConfiguration:
+        targetType: ip

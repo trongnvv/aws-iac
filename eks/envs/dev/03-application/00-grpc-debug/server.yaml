@@ -89,3 +89,20 @@ grpcRoute:
     - backendRefs:
         - name: grpc-server    # ClusterIP Service on 50051 (appProtocol: grpc)
           port: 50051
+
+# Gateway API defaults the ALB target group to `instance` (needs a NodePort/LB Service). Our
+# Service is ClusterIP → force `ip` targets (pod IPs). Also gRPC target group (protocolVersion GRPC).
+customValues:
+  - apiVersion: gateway.k8s.aws/v1
+    kind: TargetGroupConfiguration
+    metadata:
+      name: grpc-server
+      namespace: grpc-debug
+    spec:
+      targetReference:
+        group: ""
+        kind: Service
+        name: grpc-server
+      defaultConfiguration:
+        targetType: ip
+        protocolVersion: GRPC
