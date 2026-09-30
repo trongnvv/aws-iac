@@ -134,12 +134,25 @@ so it doesn't reproduce the pinning bug from the base lab — that only shows up
 
 ## 4. Case D — gRPC through Gateway API (`GRPCRoute`)
 Gateway API has a **native `GRPCRoute` kind** (GA since v1.1) — no vendor annotation. LBC
-v3.5 provisions the ALB from it. gRPC over the ALB needs HTTPS, so give the listener a cert
-(auto-discovered from ACM by hostname, or set `defaultCertificate` in the
-`LoadBalancerConfiguration`):
+v3.5 provisions the ALB. gRPC over the ALB needs HTTPS, and here the LBC + upstream CRD have a
+**TLS quirk**: the CRD requires `tls.certificateRefs` **or** `tls.options` for a `Terminate`
+listener, but the LBC ignores both — you pass a **dummy `tls.options`** to satisfy CRD
+validation and set the real cert in the `LoadBalancerConfiguration.listenerConfigurations[].defaultCertificate`:
 ```bash
+CERT_ARN=$(cd ../../../../foundation/01-dns && tofu output -raw regional_cert_arn)
 kubectl get crd grpcroutes.gateway.networking.k8s.io   # present after the v1.6 CRD apply
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
+apiVersion: gateway.k8s.aws/v1
+kind: LoadBalancerConfiguration
+metadata:
+  name: internet-facing
+  namespace: grpc-debug
+spec:
+  scheme: internet-facing
+  listenerConfigurations:
+    - protocolPort: HTTPS:443
+      defaultCertificate: $CERT_ARN     # the ALB's cert (LBC ignores the listener's certificateRefs)
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -153,7 +166,10 @@ spec:
     - name: grpc
       port: 443
       protocol: HTTPS
-      hostname: "grpc-server.trongnv.space"   # LBC auto-discovers the *.trongnv.space ACM cert
+      hostname: "grpc-server.trongnv.space"
+      tls:
+        mode: Terminate
+        options: { pass-crd-validation: "true" }   # no-op for the LBC; only gets past CRD validation
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GRPCRoute
@@ -162,12 +178,14 @@ metadata:
   namespace: grpc-debug
 spec:
   parentRefs: [{ name: grpc-gw }]
+  hostnames: ["grpc-server.trongnv.space"]
   rules:
     - backendRefs: [{ name: grpc-server, port: 50051 }]
 EOF
 ```
-(The `LoadBalancerConfiguration internet-facing` from Case B must exist in this namespace too,
-or reference one in scope.)
+> **TLS quirk:** the upstream Gateway API CRD enforces `certificateRefs` OR `options` for
+> `mode: Terminate`; the LBC uses neither (the cert comes from the `LoadBalancerConfiguration`).
+> The `pass-crd-validation` option is a no-op purely to get past CRD validation.
 
 Hammer it and confirm the ALB L7-routes each RPC across all 3 server pods — the Gateway does
 the spread the base lab needed the client to do (case 3/4). This is a *gateway* doing

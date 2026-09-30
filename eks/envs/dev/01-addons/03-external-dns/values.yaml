@@ -1,4 +1,5 @@
-provider: aws
+provider:
+  name: aws            # object form (chart 1.22+); the legacy `provider: aws` string is deprecated
 policy: sync
 # Watch both classic Ingress (-01) and Gateway API HTTPRoutes (-02) so records are
 # created for either exposure style.

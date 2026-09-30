@@ -63,10 +63,16 @@ gateway:
       kind: LoadBalancerConfiguration
       name: internet-facing
   listeners:
-    - name: http
-      protocol: HTTP
-      port: 80
+    - name: https
+      protocol: HTTPS
+      port: 443
       hostname: grpc-debug-client-02.trongnv.space
+      tls:
+        mode: Terminate
+        # LBC ignores certificateRefs/options — the cert comes from the shared gateway-infra
+        # LoadBalancerConfiguration (defaultCertificate); this dummy option only passes CRD validation.
+        options:
+          pass-crd-validation: "true"
       allowedRoutes:
         namespaces:
           from: Same

@@ -20,3 +20,10 @@ customValues:
       namespace: grpc-debug
     spec:
       scheme: internet-facing
+      # ACM cert for HTTPS Gateway listeners — LBC configures the ALB cert HERE (the Gateway
+      # listener's certificateRefs is ignored). Set the wildcard *.trongnv.space ARN once:
+      #   sed -i "s|CERT_ARN|$(tofu -chdir=../../../../../foundation/01-dns output -raw regional_cert_arn)|" gateway-infra.yaml
+      # Only applies to HTTPS listeners; the client -02 HTTP:80 listener ignores this entry.
+      listenerConfigurations:
+        - protocolPort: HTTPS:443
+          defaultCertificate: arn:aws:acm:ap-southeast-1:391511533175:certificate/6a5d4660-80d3-4b6c-9a8a-ea7d97d7a9cb
