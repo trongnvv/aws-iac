@@ -45,8 +45,44 @@ balancer types from Kubernetes objects — choose per workload:
 | Latency / throughput | higher | **lowest / very high** |
 | Use for | web, REST, normal ingress | non-HTTP, gRPC, low-latency, source/static-IP needs |
 
-Both use **target-type `ip`** — traffic lands directly on the pod IP (VPC CNI real IPs),
-skipping the node-port hop.
+### Target type: `ip` vs `instance`
+
+The target group registers different things depending on target type (set per Service):
+
+**`instance`** — targets are **nodes**, on the Service's **NodePort**.
+- Requires `Service type: NodePort` or `LoadBalancer` (a ClusterIP has no NodePort → rejected:
+  *"TargetGroup port is empty ... must be of type NodePort or LoadBalancer"*).
+- AWS: target group entries = `<instance-id>:<nodePort>`.
+- Path: `Client → ALB/NLB → node:NodePort → kube-proxy (iptables/IPVS) → pod` — the pod may be
+  on a **different node** (a second hop). The client source IP is SNAT'd away unless
+  `externalTrafficPolicy: Local`. Health check hits `node:NodePort`, not each pod.
+
+**`ip`** — targets are **pod IPs**, on the pod's **container port**.
+- Works with **any** Service including **ClusterIP** (LBC reads EndpointSlices for the pod IPs).
+  Requires routable pod IPs → the **AWS VPC CNI**.
+- AWS: target group entries = `<pod-ip>:<containerPort>`.
+- Path: `Client → ALB/NLB → pod IP` — straight to the pod's ENI in the VPC, **no NodePort, no
+  kube-proxy hop** (lowest latency). ALB terminates so the client IP is in `X-Forwarded-For`;
+  an NLB in ip mode preserves the real client IP. Health check hits **each pod IP** (true
+  per-pod health) and pairs with the **pod readiness gate** → zero-drop rollouts. LBC
+  registers/deregisters pod IPs as pods come and go.
+
+| | `instance` | `ip` |
+|---|---|---|
+| Target | `node:NodePort` | `pod-ip:containerPort` |
+| Service type | NodePort / LoadBalancer | any (**ClusterIP** ok) |
+| CNI | any | VPC CNI (routable pod IPs) |
+| Data-path hops | ALB → node → kube-proxy → pod (≤2) | ALB → pod (1) |
+| Client source IP | SNAT'd unless `externalTrafficPolicy: Local` | X-Forwarded-For (ALB) / preserved (NLB) |
+| Health check | per `node:NodePort` | per pod |
+| Readiness gate | no | yes |
+
+**This platform uses `ip` everywhere** (Services are ClusterIP; the VPC CNI gives pods real IPs).
+How you set it differs by API:
+- **Ingress** → annotation `alb.ingress.kubernetes.io/target-type: ip`.
+- **Gateway API** → the `TargetGroupConfiguration` CRD (`spec.defaultConfiguration.targetType: ip`)
+  attached to the Service. Gateway API does **not** read the Ingress annotation, and the default
+  is `instance` — so a ClusterIP Service fails until you add this CRD.
 
 > **Finance/exchange workloads** (FIX, market-data feeds): **NLB** is usually the edge —
 > low latency, static EIP for exchange allowlisting, and preserved source IP.

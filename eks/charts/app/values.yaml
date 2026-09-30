@@ -91,5 +91,12 @@ grpcRoute:
   servicePort: 0          # 0 => from `port`
   rules: []
 
+# ---- LBC TargetGroupConfiguration (Gateway API target-group settings, per Service) ----
+targetGroupConfiguration:
+  enabled: false
+  serviceName: ""         # defaults to app name
+  targetType: ip          # pod IPs (ClusterIP ok); Gateway API default is `instance` (needs NodePort/LB)
+  protocolVersion: ""     # e.g. GRPC for gRPC backends
+
 # ---- raw passthrough: arbitrary manifests rendered as-is (CRs the fields don't cover) ----
 customValues: []
