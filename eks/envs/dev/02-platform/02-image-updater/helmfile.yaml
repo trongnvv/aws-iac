@@ -1,0 +1,14 @@
+# Argo CD Image Updater — polls ECR for new image tags and writes them back to the gitops
+# repo (git mode). Installed after 00-argocd (same namespace, reads Argo CD Applications).
+repositories:
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+releases:
+  - name: argocd-image-updater
+    namespace: argocd
+    chart: argo/argocd-image-updater
+    version: "0.12.0"
+    wait: true
+    values:
+      - values.yaml

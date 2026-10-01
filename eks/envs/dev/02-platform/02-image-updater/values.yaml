@@ -1,0 +1,16 @@
+# ECR auth with no static creds: the `ecr:` credential type uses the pod's IAM identity
+# (Pod Identity — role eks-dev-image-updater-ecr-read bound to SA argocd-image-updater,
+# declared in aws-iac/foundation/04-app-cicd). Git write-back reuses the Argo CD repo
+# credential for the gitops repo (no extra secret here).
+serviceAccount:
+  create: true
+  name: argocd-image-updater
+
+config:
+  registries:
+    - name: ECR
+      api_url: https://391511533175.dkr.ecr.ap-southeast-1.amazonaws.com
+      prefix: 391511533175.dkr.ecr.ap-southeast-1.amazonaws.com
+      ping: yes
+      credentials: ecr:ap-southeast-1
+      credsexpire: 10h
