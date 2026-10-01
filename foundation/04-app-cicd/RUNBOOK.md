@@ -29,8 +29,9 @@ Detailed commands live in the module READMEs referenced below — this is the or
 - Current files use a **CronJob refresh** (argo-simple README §2) — ⚠️ fix the CronJob image to one with aws-cli + kubectl.
 - **Recommended:** switch to the **ECR credential helper** (identity, no CronJob) — needs a custom repo-server. *(not yet wired)*
 
-**F. Install Image Updater + apps** 🖐️ — `kubectl apply platform/image-updater.yaml` then
-`apps/grpc-conn-debug/{server,client}.yaml`.
+**F. Image Updater + apps** — Image Updater is a platform component: ⚙️ `aws-iac/eks`
+`./deploy.sh 02-platform` (dir `02-image-updater`). Then 🖐️ `kubectl apply
+apps/grpc-conn-debug/{server,client}.yaml` from `argo-simple`.
 
 **G. First run** 🖐️ — push the app repo → CodePipeline builds → image in ECR → Image Updater
 bumps the tag → ArgoCD deploys.
