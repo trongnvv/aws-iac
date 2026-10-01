@@ -51,6 +51,7 @@ resource "aws_iam_role_policy" "ecr_helm_push" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
+          "ecr:BatchGetImage", # helm push HEADs the manifest to check existence (registry-v2 API)
         ]
         Resource = local.helm_repo_arn
       },

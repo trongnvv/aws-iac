@@ -1,119 +1,74 @@
 # foundation/03-cicd — Helm chart pipeline (CodeBuild → ECR)
 
-CodeBuild builds the charts in GitLab `trongnvv-platform/helm-chart-template` and pushes them to
-ECR as OCI artifacts (`helm/<chart>`). This module owns the IAM role, the GitLab
-connection, the CodeBuild project and its webhook. The chart repo owns only the charts and
-the runbook.
+CodeBuild builds the charts in GitLab `trongnvv-platform/helm-chart-template` and pushes them
+to ECR as OCI artifacts (`helm/<chart>`). This module owns the IAM role, the GitLab
+connection, and the CodeBuild project + webhook. ECR repos are **not** declared here — the
+pipeline self-provisions `helm/<chart>` on first push.
 
 | File | Resources |
 |---|---|
 | `2-codebuild-helm-chart.tf` | IAM role `codebuild-helm-chart` + ECR/logs policy |
-| `3-codebuild-project.tf` | CodeConnections connection, source credential, CodeBuild project, webhook, `UseConnection` policy |
+| `3-codebuild-project.tf` | connection, source credential, project, webhook, `UseConnection` policy |
 
-ECR repos are not declared here — the pipeline creates `helm/<chart>` on first push.
+## 1. Step by step
 
-## Auth model
+### Setup (one run, one pause)
+`foundation/apply.sh` creates the connection, pauses for the one-time OAuth approval, then
+applies the rest — the webhook can only register once the connection is authorized:
 
-Two boundaries. "Trust" and "auth" are not the same thing.
+1. `./apply.sh` runs, then stops at the authorize prompt.
+2. Authorize: Console → Developer Tools → **Connections** → `gitlab` → *Update pending connection*.
+3. Press **ENTER** — it applies the project + webhook and finishes.
 
-**A. GitLab ↔ AWS — authenticated both ways.** CodeConnections holds an OAuth token (from
-the one-time authorize). AWS → GitLab (clone, webhook setup) uses that token; GitLab → AWS
-(webhook on push) is signed with a secret AWS verifies. Neither direction is open.
-
-**B. CodeBuild → ECR — trust, no secret.** CodeBuild assumes the role via its trust policy
-(`codebuild.amazonaws.com` + `sts:AssumeRole`). The permission policy scopes the push to
-`helm/*`.
-
+### On each push
 ```
-authorize once:  human OAuth ──▶ AWS gets a GitLab token (CodeConnections)
-on push:         GitLab ──signed webhook──▶ AWS ──clone (token)──▶ GitLab
-inside AWS:      CodeBuild ──AssumeRole──▶ Role ──temp creds──▶ ECR (helm/*)
+push main → GitLab signed webhook → AWS verifies secret + ref=main → StartBuild
+CodeBuild AssumeRole → clone via connection → for each chart folder:
+  lint → template → ensure ECR repo helm/<chart> → skip if version exists → package → push
 ```
 
-### GitLab ↔ AWS — step by step
+Release a new version = bump `version` in the chart's `Chart.yaml`, then push.
 
-Two credentials cross this boundary, one per direction: an **OAuth token** (GitLab-issued,
-AWS-held) for AWS → GitLab, and a **webhook secret** (AWS-generated, stored both sides) for
-GitLab → AWS.
+## 2. Explanation
 
-**Phase A — connection (once).**
-1. `tofu apply` creates the connection in `PENDING` — no token yet.
-2. A human authorizes in the console → redirected to GitLab's consent page → approves the
-   AWS OAuth app (scopes: read repo + manage webhooks).
-3. GitLab issues an OAuth access token (+ refresh token); CodeConnections stores and
-   auto-rotates it. Connection → `AVAILABLE`. AWS now holds a token to the repo.
-
-**Phase B — webhook (apply with the connection `AVAILABLE`).**
-4. `aws_codebuild_webhook` makes AWS call the GitLab API *with the token* to create a
-   project webhook: URL → an AWS endpoint, plus a secret `S` AWS generates. GitLab stores
-   both. (This is why apply.sh creates the connection, pauses to authorize, then applies the
-   webhook — see Setup.)
-
-**Phase C — each push.**
-5. `push main` → GitLab POSTs the webhook to AWS, carrying secret `S` (`X-Gitlab-Token`).
-6. AWS verifies `S` and the ref filter (`refs/heads/main`) → `StartBuild`.
-7. CodeBuild assumes its role (internal AWS trust — unrelated to GitLab).
-8. CodeBuild clones over HTTPS using the connection's OAuth token (`UseConnection`);
-   GitLab validates the token and returns the source.
+### Auth — who trusts whom
+Two credentials cross the GitLab ↔ AWS boundary, one per direction:
 
 | Credential | Issued by | Held by | Used for | Verified by |
 |---|---|---|---|---|
 | OAuth token | **GitLab** | AWS (CodeConnections) | clone source, create webhook | GitLab |
 | Webhook secret `S` | **AWS** | AWS + GitLab | sign the webhook payload | AWS |
 
-GitLab is the party that *grants* (you authorize once); AWS holds and auto-rotates that
-token to clone and to wire the webhook. No PAT, no OIDC — all inside the connection.
+Lifecycle:
+- **A — connection (once).** `apply` creates it `PENDING`; a human authorizes → GitLab issues
+  an OAuth token that CodeConnections stores and auto-rotates → `AVAILABLE`.
+- **B — webhook.** AWS calls the GitLab API *with that token* to create the webhook (+ secret
+  `S`). Needs the connection already authorized — hence the pause in setup.
+- **C — each push.** GitLab POSTs signed with `S`; AWS verifies → `StartBuild`; CodeBuild
+  clones with the token.
 
-## Standalone vs CodePipeline
+So **GitLab grants AWS** (you authorize once); AWS holds and rotates the token. It is *not*
+"AWS trusts GitLab" — that direction would be OIDC federation, which we don't use. Inside AWS,
+CodeBuild → ECR is pure role trust (`AssumeRole`), no secret.
 
-Both read GitLab through the same CodeConnections connection. What differs is who holds it
-and how many roles are in play.
+### source_credential vs UseConnection — why both
+- `aws_codebuild_source_credential` = **wiring**: maps "GITLAB source → this connection".
+  Missing → the project's GitLab source has no credential → source resolution fails.
+- `aws_iam_role_policy` UseConnection = **permission**: lets the role actually use the
+  connection. Missing → `AccessDenied` on UseConnection when cloning.
 
-**Standalone (chosen).** The webhook hits the CodeBuild project; CodeBuild clones via the
-connection and pushes. One role.
+One says *which* connection, the other *allows* using it — both required.
 
-```
-GitLab ──signed webhook──▶ CodeBuild ──clone (UseConnection)──▶ CodeBuild ──AssumeRole──▶ ECR
-```
-
-Role `codebuild-helm-chart` needs `codeconnections:UseConnection` (clone) **+** ECR push.
-
-**CodePipeline.** The webhook hits the pipeline; its Source stage clones via the connection
-into an S3 artifact store, then starts CodeBuild on that artifact. Two roles + a bucket.
-
-```
-GitLab ──webhook──▶ CodePipeline (Source: UseConnection → S3) ──StartBuild──▶ CodeBuild ──▶ ECR
-```
-
-- Pipeline role: `UseConnection` + S3 read/write + `codebuild:StartBuild`.
-- CodeBuild role: S3 read + ECR push (it no longer talks to GitLab — source comes from S3).
-
-| | Standalone | CodePipeline |
-|---|---|---|
-| Holds the connection | CodeBuild | CodePipeline (Source stage) |
-| Clones GitLab | CodeBuild | CodePipeline → S3 |
-| Roles | **1** | **2** |
-| Artifact store | none | **S3 bucket (required)** |
-| Webhook target | CodeBuild project | CodePipeline |
-
-One build step needs no orchestration, so standalone — no second role, no bucket.
-
-## Decisions
-
-- **CodeConnections, not a PAT** — AWS owns the token; nothing to store or rotate.
+### Design decisions
+- **CodeConnections, not a PAT** — AWS owns and rotates the token; nothing to store.
 - **IAM role, not static keys or OIDC** — CodeBuild runs inside AWS, so it uses its own
-  identity for short-lived creds. OIDC is only for CI *outside* AWS (e.g. a GitLab runner).
-- **ECR repos self-provisioned** — `buildspec.yml` creates `helm/<chart>`; adding a chart
-  needs no change here.
-- **Scoped to `helm/*`** — the role cannot touch the shared image repos in `02-ecr`.
+  identity. OIDC is only for CI *outside* AWS (e.g. a GitLab runner).
+- **Standalone CodeBuild + webhook, not CodePipeline** — one build step needs no
+  orchestration, so no second role and no S3 artifact bucket.
+- **ECR self-provisioned, scoped to `helm/*`** — the buildspec creates `helm/<chart>`; the
+  role cannot touch the shared image repos in `02-ecr`.
 
-## Setup
-
-`foundation/apply.sh` does it in one run. The GitLab webhook can only register once the
-connection is authorized, so the script creates the connection first (`-target`), then pauses:
-
-1. `./apply.sh` runs, then stops at the authorize prompt.
-2. Authorize the GitLab connection in the console (the only manual step).
-3. Press ENTER — the script applies the rest (project, webhook) and finishes.
-
-Full runbook: the chart repo's README.
+> **Gotcha — `ecr:BatchGetImage` is part of the push grant.** `helm push` HEADs the manifest
+> to check existence first; the Docker registry-v2 API routes that to `ecr:BatchGetImage`, not
+> to `ecr:DescribeImages` (which only serves the management API). Omit it and the push fails
+> with `403 Forbidden` on the manifest HEAD, even though every upload/put action is allowed.
