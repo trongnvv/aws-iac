@@ -6,6 +6,10 @@
 # ⚠️ Grafana has a login; Prometheus & Alertmanager have **no auth** — internet-facing is
 # lab-only. For real use set scheme=internal (VPN/bastion) or put auth in front.
 grafana:
+  # Dev-lab only: fixed admin password so daily teardown/deploy keeps the same login
+  # (the chart otherwise generates a new random one each install). User = admin.
+  # ⚠️ Do NOT ship a committed password for prod/shared — use grafana.admin.existingSecret there.
+  adminPassword: "i1g8pBRn1plfBW2eGvlfwvUh29475he66mezDDkE"
   ingress:
     enabled: true
     ingressClassName: alb

@@ -1,51 +1,39 @@
-# gRPC server release (charts/app). Release name = grpc-server -> pods/Services get
-# label app.kubernetes.io/name=grpc-server. 3 replicas so you can watch which backend
-# the client's single long-lived connection lands on.
-# `port` (name/number/appProtocol) drives the container port, both Services' ports, and
-# the auto gRPC health probe. Probes, resources and securityContext come from chart defaults.
-# Set the ECR account id once:
-#   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" server.yaml
+# gRPC server: 3 replicas so you can watch which backend the client's single long-lived
+# connection lands on (the gRPC-on-L4 LB gotcha). Probes/resources/securityContext = chart defaults.
 image: "trongnv138/grpc-conn-debug-server:v1"
 replicas: 3
-# amd64 image -> pin off the arm64 managed node group so Karpenter provisions an
-# amd64 node (NodePool is amd64-only). Remove once the image is multi-arch.
+# amd64-only image → pin off the arm64 managed node group so Karpenter gives it an amd64 node.
 nodeSelector:
   kubernetes.io/arch: amd64
 port:
   name: grpc
   number: 50051
-  appProtocol: grpc # -> gRPC probe + Service appProtocol=grpc
+  appProtocol: grpc       # → gRPC probe + Service appProtocol=grpc
 env:
   - name: LISTEN_ADDR
     value: ":50051"
-  # Downward API: report the real pod IP so the client log tells apart the ClusterIP
-  # VIP from the actual backend it landed on.
-  - name: POD_IP
+  - name: POD_IP          # downward API: report the real pod IP so the client sees which backend answered
     valueFrom:
       fieldRef:
         fieldPath: status.podIP
 services:
-  # ClusterIP — one virtual IP; L4 pins gRPC's single HTTP/2 conn to one backend.
-  # port omitted -> derived from `port` (50051 / targetPort grpc / appProtocol grpc).
-  - name: grpc-server
-  # Headless — DNS returns every pod IP; use with client LB_POLICY=round_robin.
-  - name: grpc-server-headless
+  - name: grpc-server              # ClusterIP — L4 pins gRPC's single HTTP/2 conn to one backend
+  - name: grpc-server-headless     # headless — DNS returns all pod IPs (use with client round_robin)
     clusterIP: None
 
-# Two external exposures of the gRPC server (mirrors the client -01/-02), both ALB/LBC:
-#   -01 = classic Ingress   -02 = Gateway API GRPCRoute
-# gRPC over an ALB needs HTTPS (ALPN h2); LBC auto-discovers the *.trongnv.space ACM cert by host.
+# Two front doors to the same server (mirrors the client): -01 classic Ingress, -02 Gateway API.
+# Both HTTPS (ALB gRPC needs ALPN h2).
 
-# --- -01: classic ALB Ingress. gRPC via backend-protocol-version=GRPC + HTTPS ---
+# -01 — classic ALB Ingress
 ingress:
   enabled: true
   className: alb
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/backend-protocol-version: GRPC   # gRPC target group
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'  # HTTPS only (gRPC needs ALPN h2)
-    # no certificate-arn: LBC auto-discovers the *.trongnv.space ACM cert by host
+    alb.ingress.kubernetes.io/backend-protocol-version: GRPC
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # no certificate-arn: Ingress auto-discovers the *.trongnv.space ACM cert by host
   rules:
     - host: grpc-debug-server-01.trongnv.space
       paths:
@@ -54,7 +42,7 @@ ingress:
           serviceName: grpc-server
           servicePort: 50051
 
-# --- -02: ALB Gateway API GRPCRoute — reuses the shared gateway-infra ---
+# -02 — ALB Gateway API GRPCRoute (reuses the shared gateway-infra)
 gateway:
   enabled: true
   gatewayClassName: alb
@@ -70,11 +58,9 @@ gateway:
       hostname: grpc-debug-server-02.trongnv.space
       tls:
         mode: Terminate
-        # LBC does NOT read certificateRefs/options — the ACM cert is set in the shared
-        # gateway-infra LoadBalancerConfiguration (listenerConfigurations.defaultCertificate).
-        # This dummy option only satisfies the upstream CRD rule ("certificateRefs or options
-        # must be specified when mode is Terminate").
         options:
+          # dummy — satisfies the CRD ("Terminate needs certificateRefs or options"); LBC
+          # ignores it, the real cert is gateway-infra's LoadBalancerConfiguration.defaultCertificate.
           pass-crd-validation: "true"
       allowedRoutes:
         namespaces:
@@ -82,16 +68,15 @@ gateway:
 grpcRoute:
   enabled: true
   parentRefs:
-    - name: grpc-server        # the Gateway above (= app name)
+    - name: grpc-server
   hostnames:
     - grpc-debug-server-02.trongnv.space
   rules:
     - backendRefs:
-        - name: grpc-server    # ClusterIP Service on 50051 (appProtocol: grpc)
+        - name: grpc-server
           port: 50051
 
-# Gateway API defaults the ALB target group to `instance` (needs NodePort/LB Service); our
-# Service is ClusterIP → force `ip` targets. Also a gRPC target group.
+# Gateway API defaults to `instance` targets (needs NodePort/LB); our Service is ClusterIP → force ip.
 targetGroupConfiguration:
   enabled: true
   targetType: ip

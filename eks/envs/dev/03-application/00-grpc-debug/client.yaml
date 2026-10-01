@@ -1,25 +1,18 @@
-# gRPC client release (charts/app). Release name = grpc-client. REST front-end drives
-# on-demand gRPC calls; the Ingress exposes it via an ALB (server stays in-cluster).
-# `port` drives the container port (8080), the Service (port 80 -> targetPort http), the
-# auto HTTP probe (/healthz), and the Ingress backend port. Probes, resources and
-# securityContext come from chart defaults.
-# Set the ECR account id once:
-#   sed -i "s/ACCOUNT_ID/$(aws sts get-caller-identity --query Account --output text)/g" client.yaml
+# gRPC client: REST front-end that drives on-demand gRPC calls to the in-cluster server.
+# Probes/resources/securityContext = chart defaults.
 image: "trongnv138/grpc-conn-debug-client:v1"
 replicas: 1
-# amd64 image -> pin off the arm64 managed node group so Karpenter provisions an
-# amd64 node (NodePool is amd64-only). Remove once the image is multi-arch.
+# amd64-only image → pin off the arm64 managed node group so Karpenter gives it an amd64 node.
 nodeSelector:
   kubernetes.io/arch: amd64
 port:
   name: http
-  number: 8080 # containerPort
-  servicePort: 80 # Service + Ingress backend port
+  number: 8080
+  servicePort: 80
   healthPath: /healthz
 env:
-  # See README "4 cases": flip SERVER_ADDR / LB_POLICY to change the distribution.
-  #   Case 2/3: SERVER_ADDR=dns:///grpc-server-headless.grpc-debug.svc.cluster.local:50051
-  #   Case 4:   ClusterIP addr + a service mesh (Kuma, 02-platform/05)
+  # 4 cases of gRPC LB (see README): flip SERVER_ADDR / LB_POLICY to change the distribution.
+  # headless + round_robin spreads across pods; ClusterIP pins to one backend.
   - name: SERVER_ADDR
     value: "grpc-server.grpc-debug.svc.cluster.local:50051"
   - name: LB_POLICY
@@ -31,28 +24,27 @@ env:
   - name: INTERVAL
     value: "3s"
 services:
-  - name: grpc-client # port omitted -> 80 (servicePort) / targetPort http
+  - name: grpc-client
+
+# -01 — classic ALB Ingress
 ingress:
   enabled: true
   className: alb
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip # ALB -> pod IP directly (VPC CNI)
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'  # HTTPS only, no port 80
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    # No certificate-arn: LBC auto-discovers the ACM cert matching the host
-    # (foundation issues the wildcard *.trongnv.space) — keeps values ARN-free.
+    # no certificate-arn: Ingress auto-discovers the *.trongnv.space ACM cert by host
   rules:
-    # external-dns (01-addons/03) creates the Route 53 record for this host -> ALB.
-    # This is the model-A path (ALB Ingress / LBC). Gateway API path = -02 (see httpRoute).
     - host: grpc-debug-client-01.trongnv.space
       paths:
         - path: /
           pathType: Prefix
           serviceName: grpc-client
-          # servicePort omitted -> from `port` (80)
-# --- "-02" path: SAME client, also exposed via ALB Gateway API (in addition to -01 above) ---
-# Needs LBC feature gate ALBGatewayAPI + Gateway API CRDs v1.6 (see test-plan 01 §0).
+
+# -02 — same client, via ALB Gateway API (HTTPRoute). GatewayClass + LoadBalancerConfiguration
+# are shared infra (see gateway-infra.yaml).
 gateway:
   enabled: true
   gatewayClassName: alb
@@ -68,29 +60,23 @@ gateway:
       hostname: grpc-debug-client-02.trongnv.space
       tls:
         mode: Terminate
-        # LBC ignores certificateRefs/options — the cert comes from the shared gateway-infra
-        # LoadBalancerConfiguration (defaultCertificate); this dummy option only passes CRD validation.
         options:
-          pass-crd-validation: "true"
+          pass-crd-validation: "true"   # dummy; satisfies the CRD. Real cert is in gateway-infra's LoadBalancerConfiguration.
       allowedRoutes:
         namespaces:
           from: Same
 httpRoute:
   enabled: true
   parentRefs:
-    - name: grpc-client        # the Gateway above (= app name)
+    - name: grpc-client
   hostnames:
     - grpc-debug-client-02.trongnv.space
   rules:
     - backendRefs:
-        - name: grpc-client    # reuse this release's Service
+        - name: grpc-client
           port: 80
-# GatewayClass "alb" + LoadBalancerConfiguration "internet-facing" (referenced above) are
-# SHARED infra — defined once in the `gateway-infra` release (gateway-infra.yaml), reused by
-# the server and any other app that exposes via the ALB Gateway API.
 
-# Gateway API defaults the ALB target group to `instance` (needs NodePort/LB Service); our
-# Service is ClusterIP → force `ip` targets (pod IPs).
+# Gateway API defaults to `instance` targets; our Service is ClusterIP → force ip.
 targetGroupConfiguration:
   enabled: true
   targetType: ip
