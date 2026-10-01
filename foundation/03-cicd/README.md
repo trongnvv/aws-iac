@@ -109,5 +109,12 @@ One build step needs no orchestration, so standalone — no second role, no buck
 
 ## Setup
 
-One `tofu apply`, then authorize the GitLab connection once in the console (the only manual
-step). Full runbook: the chart repo's README.
+`foundation/apply.sh` applies this module. The webhook can only register once the connection
+is authorized, so setup is **two applies around one manual click**:
+
+1. `./apply.sh` — creates role, connection (`PENDING`), source credential, project. The
+   webhook step fails while the connection is `PENDING` — expected, not a script error.
+2. Authorize the GitLab connection in the console (the only manual step).
+3. `./apply.sh` again — idempotent; the webhook registers this time.
+
+Full runbook: the chart repo's README.

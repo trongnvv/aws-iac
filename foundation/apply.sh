@@ -8,7 +8,9 @@ cd "$(dirname "$0")"
 (cd 00-tf-backend && tofu init && tofu apply -auto-approve)
 (cd 01-dns && tofu init && tofu apply -auto-approve)
 (cd 02-ecr && tofu init && tofu apply -auto-approve)
-(cd 03-cicd && tofu init && tofu apply -auto-approve)
+# 03-cicd: the webhook fails on the first run while the GitLab connection is PENDING — expected.
+# Authorize the connection (below), then re-run this script; the webhook registers on the retry.
+(cd 03-cicd && tofu init && tofu apply -auto-approve) || true
 echo "== set these NS records at your registrar: =="
 (cd 01-dns && tofu output name_servers)
-echo "== authorize the GitLab connection once: Console -> Developer Tools -> Connections -> gitlab -> Update pending connection =="
+echo "== authorize the GitLab connection once: Console -> Developer Tools -> Connections -> gitlab -> Update pending connection, THEN re-run ./apply.sh =="
