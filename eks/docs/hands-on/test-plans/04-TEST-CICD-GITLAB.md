@@ -65,7 +65,7 @@ kubectl rollout status deploy/app
 | | CodeBuild | GitLab CI (in-cluster runner) |
 |---|---|---|
 | Build compute | AWS-managed, off-cluster | Runs **as pods on this EKS cluster** |
-| Trigger | GitHub webhook → CodeBuild | GitLab push → runner pod |
+| Trigger | GitLab webhook → CodeBuild (CodeConnections) | GitLab push → runner pod |
 | Credentials to ECR | IAM role on the CodeBuild project | Static keys as CI variables (or OIDC) |
 | CD | ArgoCD, unchanged | ArgoCD, unchanged |
 

@@ -9,9 +9,9 @@ itself the thing worth observing.
 ## 0. Prereqs
 - Shared ECR `app` repo already exists (`foundation/02-ecr`, `repo_names`).
 - `envs/<env>/02-platform/00-argocd` applied.
-- A git repo CodeBuild can read (GitHub works without extra setup; CodeCommit is
-  closed to new customers). A small app with a `Dockerfile` — anything, even a
-  one-line `FROM traefik/whoami` works for this test.
+- A **GitLab** repo CodeBuild can read (through a CodeConnections connection, set up in
+  §3). A small app with a `Dockerfile` — anything, even a one-line `FROM traefik/whoami`.
+  *(CodeCommit is closed to new customers; bring your own Git.)*
 - A second small git repo (or a folder in one) holding the **k8s manifests** ArgoCD
   watches — kept separate from app source, standard GitOps split.
 
@@ -44,8 +44,13 @@ phases:
 
 ## 3. Create the CodeBuild project + webhook
 ```bash
+# One-time: connect AWS to your GitLab (CodeConnections). The OAuth handshake must be
+# approved in the console — after creating, check: aws codeconnections get-connection --connection-arn "$CONN"
+CONN=$(aws codeconnections create-connection --provider-type GitLab \
+  --connection-name gitlab --query ConnectionArn --output text)
+
 aws codebuild create-project --name app-build \
-  --source type=GITHUB,location=https://github.com/<you>/<app-repo>.git \
+  --source "type=GITLAB,location=https://gitlab.com/<you>/<app-repo>.git,auth={type=CODECONNECTIONS,resource=$CONN}" \
   --artifacts type=NO_ARTIFACTS \
   --environment type=LINUX_CONTAINER,image=aws/codebuild/amazonlinux2-x86_64-standard:5.0,computeType=BUILD_GENERAL1_SMALL,privilegedMode=true \
   --service-role "arn:aws:iam::$ACCOUNT:role/codebuild-app-build"
@@ -66,7 +71,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/<you>/<manifests-repo>.git
+    repoURL: https://gitlab.com/<you>/<manifests-repo>.git
     targetRevision: main
     path: .
   destination: { server: https://kubernetes.default.svc, namespace: default }
