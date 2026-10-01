@@ -1,0 +1,31 @@
+# Expose the Argo CD UI via ALB Ingress (HTTPS-only) + external-dns. TLS = wildcard
+# *.trongnv.space (ACM, auto-discovered from the host). The server runs in insecure mode so
+# the ALB terminates TLS and talks plain HTTP to argocd-server — the standard ALB + Argo CD
+# setup. The gRPC CLI then logs in with `argocd login argocd.trongnv.space --grpc-web`.
+global:
+  domain: argocd.trongnv.space
+
+configs:
+  params:
+    server.insecure: true
+  # Dev-lab only: fixed admin password so daily teardown/deploy keeps the same login.
+  # bcrypt hash of "i1g8pBRn1plfBW2eGvlfwvUh29475he66mezDDkE" (same as the Grafana lab pass). User = admin.
+  # ⚠️ Do NOT ship a committed password for prod/shared.
+  secret:
+    argocdServerAdminPassword: "$2a$10$EQbbA2kwvu/KYItX3cKvUOwcWP0LcS7EGc7sTESMrlvdfKfH.eBO2"
+    argocdServerAdminPasswordMtime: "2024-01-01T00:00:00Z"
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    hostname: argocd.trongnv.space
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    path: /
+    pathType: Prefix
+    tls: false
