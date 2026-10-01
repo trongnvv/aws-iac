@@ -14,6 +14,47 @@ access via Pod Identity (no static keys).
 Reuses the GitLab connection from `03-cicd` (already authorized) via remote state. ECR image
 repos `grpc-conn-debug/{server,client}` come from `02-ecr`.
 
+## Architecture
+
+`tofu apply` creates the CI side (CodeBuild role + project, S3 artifact bucket, CodePipeline
+role + pipeline) and the Pod Identity roles + associations for ArgoCD. CD (ArgoCD + Image
+Updater) is pull-based and lives in `gitops/argo-simple`. End to end:
+
+```mermaid
+flowchart LR
+    Dev([Developer])
+    subgraph GL[GitLab]
+      APP[(grpc-conn-debug)]
+      GITOPS[(argo-simple)]
+    end
+    subgraph AWS["AWS · ap-southeast-1"]
+      CONN[CodeConnections<br/>gitlab · reused from 03]
+      subgraph CP["CodePipeline · grpc-conn-debug"]
+        SRC[Source]
+        BLD[Build · CodeBuild DinD]
+      end
+      S3[(S3 artifact)]
+      ECRIMG[(ECR<br/>grpc-conn-debug/server,client)]
+      ECRCHART[(ECR OCI<br/>helm/app)]
+    end
+    subgraph EKS["EKS · eks-dev"]
+      IU[Image Updater<br/>Pod Identity]
+      ARGO[ArgoCD<br/>Pod Identity]
+      PODS[grpc server + client]
+    end
+    Dev -->|1 · push main| APP
+    APP -->|2 · webhook| SRC
+    SRC -->|3 · clone via CONN| S3
+    CONN -.->|token| APP
+    S3 -->|4| BLD
+    BLD -->|5 · push images| ECRIMG
+    IU -->|6 · poll tags| ECRIMG
+    IU -->|7 · commit new tag| GITOPS
+    ARGO -->|8 · read values| GITOPS
+    ARGO -->|8 · pull chart| ECRCHART
+    ARGO -->|9 · sync| PODS
+```
+
 ## 1. Step by step
 
 ### Setup

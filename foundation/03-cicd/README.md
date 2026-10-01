@@ -10,6 +10,32 @@ pipeline self-provisions `helm/<chart>` on first push.
 | `2-codebuild-helm-chart.tf` | IAM role `codebuild-helm-chart` + ECR/logs policy |
 | `3-codebuild-project.tf` | connection, source credential, project, webhook, `UseConnection` policy |
 
+## Architecture
+
+`tofu apply` (via `foundation/apply.sh`) creates, in order: the IAM role + policies → the
+CodeConnections connection → the source credential → the CodeBuild project → the webhook.
+Then each push flows through them:
+
+```mermaid
+flowchart LR
+    Dev([Developer])
+    subgraph GL[GitLab]
+      REPO[(helm-chart-template)]
+    end
+    subgraph AWS["AWS · ap-southeast-1"]
+      CONN[CodeConnections<br/>gitlab]
+      ROLE[IAM role<br/>codebuild-helm-chart]
+      CB[CodeBuild<br/>helm-chart-template-build]
+      ECR[(ECR OCI<br/>helm/chart)]
+    end
+    Dev -->|1 · push main| REPO
+    REPO -->|2 · signed webhook| CB
+    CB -->|3 · AssumeRole| ROLE
+    CB -->|4 · clone · UseConnection| CONN
+    CONN -.->|OAuth token| REPO
+    CB -->|5 · lint · package · ensure repo · push| ECR
+```
+
 ## 1. Step by step
 
 ### Setup (one run, one pause)
