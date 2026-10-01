@@ -46,8 +46,8 @@ GitLab → AWS.
 **Phase B — webhook (apply with the connection `AVAILABLE`).**
 4. `aws_codebuild_webhook` makes AWS call the GitLab API *with the token* to create a
    project webhook: URL → an AWS endpoint, plus a secret `S` AWS generates. GitLab stores
-   both. (This is why the webhook step needs the connection already authorized — see the
-   two-apply note under Setup.)
+   both. (This is why apply.sh creates the connection, pauses to authorize, then applies the
+   webhook — see Setup.)
 
 **Phase C — each push.**
 5. `push main` → GitLab POSTs the webhook to AWS, carrying secret `S` (`X-Gitlab-Token`).
@@ -109,12 +109,11 @@ One build step needs no orchestration, so standalone — no second role, no buck
 
 ## Setup
 
-`foundation/apply.sh` applies this module. The webhook can only register once the connection
-is authorized, so setup is **two applies around one manual click**:
+`foundation/apply.sh` does it in one run. The GitLab webhook can only register once the
+connection is authorized, so the script creates the connection first (`-target`), then pauses:
 
-1. `./apply.sh` — creates role, connection (`PENDING`), source credential, project. The
-   webhook step fails while the connection is `PENDING` — expected, not a script error.
+1. `./apply.sh` runs, then stops at the authorize prompt.
 2. Authorize the GitLab connection in the console (the only manual step).
-3. `./apply.sh` again — idempotent; the webhook registers this time.
+3. Press ENTER — the script applies the rest (project, webhook) and finishes.
 
 Full runbook: the chart repo's README.

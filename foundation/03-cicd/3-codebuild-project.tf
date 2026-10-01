@@ -1,6 +1,6 @@
 # GitLab connection (CodeConnections). Created in PENDING state; a human authorizes the
 # OAuth handshake once in the console before any build can clone the source.
-resource "aws_codestarconnections_connection" "gitlab" {
+resource "aws_codeconnections_connection" "gitlab" {
   name          = "gitlab"
   provider_type = "GitLab"
 }
@@ -9,7 +9,7 @@ resource "aws_codestarconnections_connection" "gitlab" {
 resource "aws_codebuild_source_credential" "gitlab" {
   auth_type   = "CODECONNECTIONS"
   server_type = "GITLAB"
-  token       = aws_codestarconnections_connection.gitlab.arn
+  token       = aws_codeconnections_connection.gitlab.arn
 }
 
 # Let the CodeBuild role clone through the connection (ECR/logs are in 2-codebuild-helm-chart.tf).
@@ -26,7 +26,7 @@ resource "aws_iam_role_policy" "use_connection" {
         "codeconnections:GetConnection",
         "codeconnections:GetConnectionToken",
       ]
-      Resource = aws_codestarconnections_connection.gitlab.arn
+      Resource = aws_codeconnections_connection.gitlab.arn
     }]
   })
 }
@@ -73,5 +73,5 @@ resource "aws_codebuild_webhook" "helm_chart" {
 }
 
 output "gitlab_connection_arn" {
-  value = aws_codestarconnections_connection.gitlab.arn
+  value = aws_codeconnections_connection.gitlab.arn
 }
