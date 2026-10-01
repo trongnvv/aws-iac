@@ -34,8 +34,6 @@ data "terraform_remote_state" "cicd" {
 locals {
   account  = data.aws_caller_identity.current.account_id
   conn_arn = data.terraform_remote_state.cicd.outputs.gitlab_connection_arn
-  ecr_app  = ["grpc-conn-debug/server", "grpc-conn-debug/client"]
-  ecr_arns = [for r in local.ecr_app : "arn:aws:ecr:${var.region}:${local.account}:repository/${r}"]
   helm_arn = "arn:aws:ecr:${var.region}:${local.account}:repository/helm/*"
   grpc_arn = "arn:aws:ecr:${var.region}:${local.account}:repository/grpc-conn-debug/*"
   logs_arn = "arn:aws:logs:${var.region}:${local.account}:log-group:/aws/codebuild/grpc-conn-debug-build*"

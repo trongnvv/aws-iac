@@ -4,7 +4,8 @@ End-to-end action list. Markers: 🖐️ manual · ⚙️ tofu/automated · ⚠�
 Detailed commands live in the module READMEs referenced below — this is the ordered checklist.
 
 ## Prereq (must be done first)
-- ⚙️ `00-tf-backend`, `01-dns`, `02-ecr` applied. 🖐️ set NS records at the registrar (`01-dns` output).
+- ⚙️ `00-tf-backend` + `01-dns` applied. 🖐️ set NS records at the registrar (`01-dns` output).
+  (`02-ecr` not required — the chart and the grpc images both self-provision their ECR repos.)
 - **03-cicd done + chart published** — `helm/app:0.7.0` must exist in ECR (ArgoCD pulls it):
   - 🖐️ authorize the `gitlab` connection (console, during `apply.sh` pause).
   - 🖐️ push `helm-chart-template` → CodeBuild publishes `helm/app`.

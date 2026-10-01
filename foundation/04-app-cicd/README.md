@@ -12,7 +12,8 @@ access via Pod Identity (no static keys).
 | `4-pod-identity.tf` | ECR-read roles + Pod Identity associations for `argocd-repo-server` and `argocd-image-updater` |
 
 Reuses the GitLab connection from `03-cicd` (already authorized) via remote state. ECR image
-repos `grpc-conn-debug/{server,client}` come from `02-ecr`.
+repos are **self-provisioned** by the buildspec on first push (`grpc-conn-debug/*`, IMMUTABLE,
+scan-on-push) — no dependency on `02-ecr`, same model as the helm chart pipeline.
 
 ## Architecture
 
@@ -82,9 +83,10 @@ Source → Build. The deploy path is fully decoupled.
 ### Two roles, two jobs (CodePipeline mode)
 - **CodePipeline role** holds the GitLab connection (`UseConnection`) and clones to S3; it
   also `StartBuild`s CodeBuild. The Source stage is the only thing that talks to GitLab.
-- **CodeBuild role** reads the source from S3 (not GitLab) and pushes images to ECR — so it
-  needs no GitLab access, only ECR push + the artifact bucket. (`ecr:BatchGetImage` is included
-  — a push HEADs the manifest, same gotcha as `03-cicd`.)
+- **CodeBuild role** reads the source from S3 (not GitLab), self-provisions the
+  `grpc-conn-debug/*` ECR repos and pushes images — so it needs no GitLab access, only ECR
+  create+push + the artifact bucket. (`ecr:BatchGetImage` is included — a push HEADs the
+  manifest, same gotcha as `03-cicd`.)
 
 ### Pod Identity, not static keys
 ArgoCD pods reach ECR through IAM roles bound to their ServiceAccounts (`pods.eks.amazonaws.com`

@@ -25,9 +25,11 @@ resource "aws_iam_role_policy" "codebuild" {
         Resource = "*"
       },
       {
-        Sid    = "EcrPush"
+        Sid    = "EcrManageAndPush"
         Effect = "Allow"
         Action = [
+          "ecr:CreateRepository", # self-provision grpc-conn-debug/* on first push (no central IaC)
+          "ecr:DescribeRepositories",
           "ecr:BatchCheckLayerAvailability",
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
@@ -35,7 +37,7 @@ resource "aws_iam_role_policy" "codebuild" {
           "ecr:PutImage",
           "ecr:BatchGetImage",
         ]
-        Resource = local.ecr_arns
+        Resource = local.grpc_arn
       },
       {
         Sid      = "PipelineArtifacts"

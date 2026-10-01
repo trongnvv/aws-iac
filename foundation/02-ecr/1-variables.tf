@@ -11,8 +11,6 @@ variable "profile" {
 variable "repo_names" {
   default = [
     "app",
-    "grpc-conn-debug/client", # gRPC LB lab (eks/envs/dev/03-application/00-grpc-debug)
-    "grpc-conn-debug/server",
   ]
 }
 
