@@ -1,27 +1,23 @@
-# grpc-debug: the app (server + client) is deployed via ArgoCD GitOps now
-# (gitlab trongnvv-platform/gitops/argo-simple → apps/grpc-conn-debug/*). Only the shared
-# gateway-infra stays here in IaC — GatewayClass is cluster-scoped platform infra, not app
-# workload, and the ArgoCD -02 gateways reference its LoadBalancerConfiguration by name.
-# server.yaml / client.yaml are kept as reference (live values are in the gitops repo).
+# grpc-debug app (server + client) is deployed via ArgoCD across 3 namespaces (dev/stg/prod) —
+# gitlab trongnvv-platform/gitops/argo-simple → apps/grpc-conn-debug/ (ApplicationSets + ImageUpdater).
+# Only DEV uses Gateway API (-02), so the shared gateway-infra (GatewayClass + LoadBalancerConfiguration
+# in ns dev) stays here in IaC. stg/prod are ingress-only. server.yaml/client.yaml kept as reference.
 releases:
-  # Shared ALB Gateway API infra (GatewayClass + LoadBalancerConfiguration) for ns grpc-debug.
   - name: gateway-infra
-    namespace: grpc-debug
+    namespace: dev
     createNamespace: true
     chart: ../../../../charts/app
     values:
       - gateway-infra.yaml
 
-# server + client — deployed via ArgoCD, NOT here (would conflict on ns grpc-debug). Reference:
+# server + client — deployed via ArgoCD (argo-simple), not here (would conflict). Reference:
 #   - name: grpc-server
 #     namespace: grpc-debug
-#     createNamespace: true
 #     chart: ../../../../charts/app
 #     needs: [grpc-debug/gateway-infra]
 #     values: [server.yaml]
 #   - name: grpc-client
 #     namespace: grpc-debug
-#     createNamespace: true
 #     chart: ../../../../charts/app
 #     needs: [grpc-debug/grpc-server, grpc-debug/gateway-infra]
 #     values: [client.yaml]

@@ -8,11 +8,19 @@ cluster coupling; ArgoCD/Image Updater Pod Identity lives in the eks env (`modul
 | File | Resources |
 |---|---|
 | `2-codebuild.tf` | CodeBuild role + project (DinD, privilegedMode) |
-| `3-codepipeline.tf` | S3 artifact bucket, pipeline role, CodePipeline (Source→Build) |
+| `3-codepipeline.tf` | S3 artifact bucket, pipeline role, CodePipeline (Source→Build on `main`) |
+| `5-promote.tf` | CodeBuild `promote` + webhook: git tag `rc-*`/semver → retag `d-<sha>` → `rc-1.1.1`/`1.1.1` |
 
 Reuses the GitLab connection from `03-cicd` (already authorized) via remote state. ECR image
 repos are **self-provisioned** by the buildspec on first push (`grpc-conn-debug/*`, IMMUTABLE,
 scan-on-push) — no dependency on `02-ecr`, same model as the helm chart pipeline.
+
+**Build once → promote → deploy (3 env):** `main` builds `d-<sha>` (dev). A git tag `rc-1.1.1`
+or `1.1.1` triggers the **promote** CodeBuild, which `aws ecr put-image` retags the commit's
+`d-<sha>` manifest to the release tag — **same digest, no rebuild**. Both projects share one
+`buildspec.yml` (it detects promote mode from the tag trigger). CD (ArgoCD ApplicationSets +
+Image Updater per env) then deploys dev/stg auto,
+prod via manual Sync — see `gitlab argo-simple` and `eks/docs/hands-on/DEPLOY-GRPC-CONN-DEBUG.md`.
 
 ## Architecture
 

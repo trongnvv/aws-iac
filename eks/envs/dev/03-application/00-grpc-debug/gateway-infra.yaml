@@ -1,10 +1,8 @@
-# Shared ALB Gateway API infra for the grpc-debug namespace — referenced by any release
-# that exposes a Service via Gateway API (client -02, server, ...). Its own release so apps
-# reuse it by name instead of each re-declaring these. Rendered raw via charts/app
-# customValues (the chart doesn't template these kinds).
+# Shared ALB Gateway API infra for the DEV namespace — GatewayClass (cluster-scoped) +
+# LoadBalancerConfiguration, referenced by the dev -02 gateways. Only dev uses Gateway API;
+# stg/prod are ingress-only. Rendered raw via charts/app customValues (no image → no Deployment).
 customValues:
-  # Cluster-scoped GatewayClass — one per cluster. Move to 01-addons (next to the LBC) if
-  # namespaces beyond grpc-debug start using the ALB Gateway API.
+  # Cluster-scoped GatewayClass — one per cluster.
   - apiVersion: gateway.networking.k8s.io/v1
     kind: GatewayClass
     metadata:
@@ -12,18 +10,15 @@ customValues:
     spec:
       controllerName: gateway.k8s.aws/alb
 
-  # LBC ALB attributes for this namespace — Gateways reference it via infrastructure.parametersRef.
+  # LBC ALB attributes for ns dev — Gateways reference it via infrastructure.parametersRef.
   - apiVersion: gateway.k8s.aws/v1
     kind: LoadBalancerConfiguration
     metadata:
       name: internet-facing
-      namespace: grpc-debug
+      namespace: dev
     spec:
       scheme: internet-facing
-      # ACM cert for HTTPS Gateway listeners — LBC configures the ALB cert HERE (the Gateway
-      # listener's certificateRefs is ignored). Set the wildcard *.trongnv.space ARN once:
-      #   sed -i "s|CERT_ARN|$(tofu -chdir=../../../../../foundation/01-dns output -raw regional_cert_arn)|" gateway-infra.yaml
-      # Only applies to HTTPS listeners; the client -02 HTTP:80 listener ignores this entry.
+      # LBC sets the ALB HTTPS cert HERE (the Gateway listener's certificateRefs is ignored).
       listenerConfigurations:
         - protocolPort: HTTPS:443
           defaultCertificate: arn:aws:acm:ap-southeast-1:391511533175:certificate/6a5d4660-80d3-4b6c-9a8a-ea7d97d7a9cb

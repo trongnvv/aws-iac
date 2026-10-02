@@ -1,101 +1,67 @@
-# Hands-on — deploy grpc-conn-debug (plan 2: CodePipeline → ECR → ArgoCD)
+# Hands-on — grpc-conn-debug CI/CD (3 env: build once → promote → deploy)
 
-End-to-end deployment of the grpc-conn-debug app: AWS-native CI (CodePipeline + CodeBuild)
-builds + pushes images to ECR; CD is ArgoCD + Image Updater pulling the shared `helm/app`
-OCI chart. Markers: 🖐️ manual · ⚙️ tofu/helmfile · ⚠️ attention.
+Build the image once on `main`, then **promote the same digest** through dev → stg → prod by
+retagging. CD is ArgoCD (ApplicationSets, one Application per env) + Image Updater (per env).
+Markers: 🖐️ manual · ⚙️ tofu/helmfile · ⚠️ attention.
 
-Design & "why" live in `foundation/04-app-cicd/README.md` and `gitops/argo-simple/README.md`.
-This is the runbook.
-
-## Prereq
-- ⚙️ `foundation`: `00-tf-backend` + `01-dns` applied; 🖐️ NS records set at the registrar.
-  (`02-ecr` not required — chart and images self-provision their ECR repos.)
-- **`03-cicd` done + chart published**: `helm/app:0.7.0` exists in ECR (ArgoCD pulls it).
-- Dev cluster `eks-dev` up (`eks/envs/dev` 00-infra + 01-addons applied).
-
-## 1. Push the repos 🖐️
-- `applications/grpc-conn-debug` — app code + `buildspec.yml` → `main`.
-- `gitops/argo-simple` — `apps/grpc-conn-debug/*` → `main`.
-
-## 2. Enable Pod Identity agent 🖐️ ⚠️
-The `eks-pod-identity-agent` addon must be on `eks-dev` — without it, ArgoCD/Image Updater
-get no ECR access.
-
-## 3. Apply the CI pipeline (foundation/04-app-cicd) ⚙️
-```bash
-cd aws-iac/foundation/04-app-cicd && tofu init && tofu apply
+## Flow
 ```
-Creates: CodePipeline `grpc-conn-debug`, CodeBuild (DinD), S3 artifact. Reuses the `03-cicd`
-GitLab connection. ⚠️ **03 must be applied before 04** (remote-state dependency). **No cluster
-resources here** — the Image Updater + ESO ECR Pod Identity roles live in eks
-`00-infra/03-addon-iam` (applied with the cluster, step 0 prereq).
-
-## 4. Deploy ArgoCD + Image Updater (eks platform) ⚙️
-```bash
-cd aws-iac/eks/envs/dev && ./deploy.sh 02-platform
+push main         → CodeBuild build → ECR grpc-conn-debug/*:d-<sha>        → DEV  (auto-sync)
+git tag rc-1.1.1  → CodeBuild promote: retag d-<sha> → :rc-1.1.1 (same digest) → STG  (auto-sync)
+git tag 1.1.1     → CodeBuild promote: retag → :1.1.1                       → PROD (manual Sync gate)
 ```
-Installs Argo CD (domain `argocd.trongnv.space`, hardcoded admin pass) + an External
-Secrets-managed `repo-ecr-helm` secret (fresh ECR token, auto-refreshed) and
-`argocd-image-updater` (ECR auth via Pod Identity).
+Only `main` builds. `rc-*` / semver git tags **retag** the commit's `d-<sha>` image (`aws ecr
+put-image`, no rebuild). Each tag is unique → ECR stays IMMUTABLE.
 
-## 5. Add the GitLab token to ArgoCD 🖐️
-Create a **Project Access Token** on `argo-simple` (role Maintainer, scope `write_repository`),
-then (don't commit the token):
+| Env | ns | Image tag | ImageUpdater allow-tags | ArgoCD sync |
+|---|---|---|---|---|
+| dev | `dev` | `d-<sha>` | `^d-[0-9a-f]{7}$` | auto |
+| stg | `stg` | `rc-1.1.1` | `^rc-` | auto |
+| prod | `prod` | `1.1.1` | `^[0-9]+\.[0-9]+\.[0-9]+$` | **manual** |
+
+## Why prod still runs Image Updater (but no auto-sync)
+GitOps deploys only when **git** changes. So Image Updater must write the promoted `1.1.1` into
+`prod/*-values.yaml` — otherwise ArgoCD has nothing to detect. prod's Application has **no
+`automated`** block → ArgoCD shows **OutOfSync** and waits; a human reviews + clicks **Sync** =
+the gate. (Image Updater = "what's ready"; manual sync = "when to ship".)
+
+## Components
+- **CI** — `foundation/04-app-cicd`: CodePipeline (main → build `d-<sha>`) + CodeBuild
+  `grpc-conn-debug-promote` (git-tag webhook → retag). Both share one `buildspec.yml` (mode by trigger).
+- **CD** — `gitlab argo-simple/apps/grpc-conn-debug/`: `appset-server.yaml` + `appset-client.yaml`
+  (ApplicationSet → 6 Applications), per-env `{dev,stg,prod}/{server,client}-values.yaml` +
+  `image-updater.yaml` (ImageUpdater CRs).
+
+## Setup (one-time)
+1. ⚙️ foundation base applied + ⚙️ `foundation/apply.sh` (03-cicd connection authorized, 04 CI).
+2. 🖐️ enable `eks-pod-identity-agent` on `eks-dev`.
+3. ⚙️ `eks` `./deploy.sh 02-platform` — Argo CD + Image Updater (chart 1.3.1, ImageUpdater CRD) +
+   the ESO-minted `repo-ecr-helm` OCI repo secret.
+4. 🖐️ GitLab token → `repo-argo-simple` secret (argo-simple README §1).
+5. 🖐️ push repos: `grpc-conn-debug` (one `buildspec.yml` for build+promote) and `argo-simple`.
+
+## Deploy the CD config 🖐️
+dev also exposes via Gateway API (`-02`), so deploy the shared gateway-infra (GatewayClass +
+LoadBalancerConfiguration in ns `dev`) first: ⚙️ `aws-iac/eks` `./deploy.sh 03-application`.
+(stg/prod are ingress-only — no gateway-infra.) Then:
 ```bash
-kubectl apply -n argocd -f - <<'EOF'
-apiVersion: v1
-kind: Secret
-metadata:
-  name: repo-argo-simple
-  namespace: argocd
-  labels: { argocd.argoproj.io/secret-type: repository }
-stringData:
-  type: git
-  url: https://gitlab.com/trongnvv-platform/gitops/argo-simple.git
-  username: oauth2          # Deploy Token: use the deploy token's username instead
-  password: <PASTE_TOKEN>
-EOF
-```
-One token serves both: ArgoCD reads the values source + Image Updater commits tag bumps.
-⚠️ The token has an expiry — set it far out, or swap for an SSH deploy key (no expiry) later.
-
-## 5b. ECR OCI chart repo — managed by External Secrets ⚙️
-The `repo-ecr-helm` secret (OCI, `enableOCI` + username/password) is **minted and auto-refreshed
-by External Secrets Operator** (`ecr-repo-externalsecret.yaml`, applied with `02-platform`). ESO
-uses the external-secrets controller's Pod Identity to fetch a fresh ECR token (refresh 10h).
-Nothing to apply by hand.
-
-## 6. Apply the Applications 🖐️
-The shared gateway-infra (GatewayClass + LoadBalancerConfiguration for the `-02` gateways) stays
-in IaC — deploy it first: ⚙️ `aws-iac/eks` `./deploy.sh 03-application`. Then the apps:
-```bash
-kubectl apply -f apps/grpc-conn-debug/server.yaml   # from argo-simple
-kubectl apply -f apps/grpc-conn-debug/client.yaml
-kubectl apply -f apps/grpc-conn-debug/image-updater.yaml   # ImageUpdater CRs (v1.x, not annotations)
+# from argo-simple
+kubectl apply -f apps/grpc-conn-debug/appset-server.yaml
+kubectl apply -f apps/grpc-conn-debug/appset-client.yaml
+kubectl apply -f apps/grpc-conn-debug/dev/image-updater.yaml
+kubectl apply -f apps/grpc-conn-debug/stg/image-updater.yaml
+kubectl apply -f apps/grpc-conn-debug/prod/image-updater.yaml
 ```
 
-## 7. Trigger CI + verify 🖐️
-```bash
-# push a commit, or run manually:
-aws codebuild start-build --project-name grpc-conn-debug-build --region ap-southeast-1
-aws ecr describe-images --repository-name grpc-conn-debug/server --region ap-southeast-1 \
-  --query 'imageDetails[].imageTags'
-```
+## Day-to-day
+- **dev**: push `main` → build `d-<sha>` → Image Updater bumps `dev/*-values.yaml` → auto-deploy ns dev.
+- **stg**: `git tag rc-1.1.1 && git push --tags` → promote → Image Updater bumps `stg/*` → auto-deploy ns stg.
+- **prod**: `git tag 1.1.1 && git push --tags` → promote → Image Updater bumps `prod/*` → ArgoCD
+  **OutOfSync** → `argocd app sync grpc-server-prod grpc-client-prod` (or Sync in UI) = gate.
 
-## 8. Verify CD
-Values start at `:d-0000000` (no such image). Once a real `d-<sha>` is in ECR, Image Updater
-detects it, commits the tag to `argo-simple`, and ArgoCD syncs.
-```bash
-kubectl -n argocd get applications grpc-server grpc-client
-kubectl -n grpc-debug get pods
-```
-- UI: `https://argocd.trongnv.space` (admin / the hardcoded lab pass). CLI: `argocd login
-  argocd.trongnv.space --grpc-web`.
-
-## ⚠️ Verify live (built blind, may need tuning)
-- **ESO ECRAuthorizationToken generator** → `repo-ecr-helm` — that the generator uses the
-  external-secrets controller Pod Identity and the ExternalSecret template populates the repo
-  secret correctly (and the ESO `generators.external-secrets.io` CRD is present).
-- **Image Updater** chart `1.3.1` (v1.x) — verify the **ImageUpdater CR** schema
-  (`applicationRefs` / `images` / `manifestTargets.helm.spec`) + git write-back on a multi-source app.
-- ECR repos are **IMMUTABLE** — re-running the same commit pushes no new tag (not an error).
+## ⚠️ Verify live (built blind)
+- **ApplicationSet** `templatePatch` conditional (prod no `automated`) — verify the prod App has no auto-sync.
+- **ImageUpdater CR** schema (v1.x) + git write-back to the per-env values file.
+- **promote** (`buildspec.yml` promote mode): `CODEBUILD_WEBHOOK_TRIGGER=tag/<name>` parsing + `put-image` on IMMUTABLE repos.
+- Hosts (external-dns, under `*.trongnv.space`): ingress `grpc-{server,client}-<env>.trongnv.space` (all envs)
+  + dev Gateway API `grpc-{server,client}-gw-dev.trongnv.space`.
