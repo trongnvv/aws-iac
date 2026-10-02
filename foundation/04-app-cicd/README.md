@@ -9,7 +9,7 @@ cluster coupling; ArgoCD/Image Updater Pod Identity lives in the eks env (`modul
 |---|---|
 | `2-codebuild.tf` | CodeBuild role + project (DinD, privilegedMode) |
 | `3-codepipeline.tf` | S3 artifact bucket, pipeline role, CodePipeline (Source→Build on `main`) |
-| `5-promote.tf` | CodeBuild `promote` + webhook: git tag `rc-*`/semver → retag `d-<sha>` → `rc-1.1.1`/`1.1.1` |
+| `4-promote.tf` | CodeBuild `promote` + webhook: git tag `rc-*`/semver → retag `d-<sha>` → `rc-1.1.1`/`1.1.1` |
 
 Reuses the GitLab connection from `03-cicd` (already authorized) via remote state. ECR image
 repos are **self-provisioned** by the buildspec on first push (`grpc-conn-debug/*`, IMMUTABLE,

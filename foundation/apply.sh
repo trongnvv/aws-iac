@@ -17,8 +17,9 @@ echo "== Authorize the GitLab connection: Console -> Developer Tools -> Connecti
 read -r -p "Press ENTER once it shows AVAILABLE... "
 (cd 03-cicd && tofu apply -auto-approve)
 
-# 04-app-cicd reuses the 03-cicd connection (remote state) -> must run after it.
+# 04/05 reuse the 03-cicd connection (remote state) -> must run after it (and after authorize).
 (cd 04-app-cicd && tofu init && tofu apply -auto-approve)
+(cd 05-hello-express-cicd && tofu init && tofu apply -auto-approve)
 
 echo "== set these NS records at your registrar: =="
 (cd 01-dns && tofu output name_servers)
