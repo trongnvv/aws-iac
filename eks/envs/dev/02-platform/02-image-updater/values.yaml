@@ -1,7 +1,8 @@
-# ECR auth with no static creds: the `ecr:` credential type uses the pod's IAM identity
-# (Pod Identity — role eks-dev-image-updater-ecr-read bound to SA argocd-image-updater,
-# declared in aws-iac/foundation/04-app-cicd). Git write-back reuses the Argo CD repo
-# credential for the gitops repo (no extra secret here).
+# Controller config. ECR auth with no static creds: `ecr:` uses the pod's Pod Identity
+# (role eks-dev-image-updater bound to SA argocd-image-updater, in eks modules/addon-iam).
+# Per-app watch config is in ImageUpdater CRs (argo-simple apps/grpc-conn-debug/image-updater.yaml),
+# not here. Git write-back reuses the ArgoCD repo-argo-simple credential.
+# ⚠️ verify the config schema against chart 1.3.1 (v1.x).
 serviceAccount:
   create: true
   name: argocd-image-updater

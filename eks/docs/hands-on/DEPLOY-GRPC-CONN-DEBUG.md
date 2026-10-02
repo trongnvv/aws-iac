@@ -71,6 +71,7 @@ in IaC — deploy it first: ⚙️ `aws-iac/eks` `./deploy.sh 03-application`. T
 ```bash
 kubectl apply -f apps/grpc-conn-debug/server.yaml   # from argo-simple
 kubectl apply -f apps/grpc-conn-debug/client.yaml
+kubectl apply -f apps/grpc-conn-debug/image-updater.yaml   # ImageUpdater CRs (v1.x, not annotations)
 ```
 
 ## 7. Trigger CI + verify 🖐️
@@ -95,5 +96,6 @@ kubectl -n grpc-debug get pods
 - **ESO ECRAuthorizationToken generator** → `repo-ecr-helm` — that the generator uses the
   external-secrets controller Pod Identity and the ExternalSecret template populates the repo
   secret correctly (and the ESO `generators.external-secrets.io` CRD is present).
-- **Image Updater** chart `0.12.0` + `write-back-target: helmvalues:` on a multi-source app.
+- **Image Updater** chart `1.3.1` (v1.x) — verify the **ImageUpdater CR** schema
+  (`applicationRefs` / `images` / `manifestTargets.helm.spec`) + git write-back on a multi-source app.
 - ECR repos are **IMMUTABLE** — re-running the same commit pushes no new tag (not an error).
