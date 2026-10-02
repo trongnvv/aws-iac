@@ -94,5 +94,6 @@ Source → Build. The deploy path is fully decoupled.
 `argocd-image-updater` reaches ECR via an IAM role bound to its ServiceAccount
 (`pods.eks.amazonaws.com` trust) — read on `grpc-conn-debug/*` to poll tags. ArgoCD repo-server
 needs **no** Pod Identity here: it pulls the `helm/app` OCI chart via the `repo-ecr-helm` secret
-that **External Secrets Operator** mints (ESO holds `ecr:GetAuthorizationToken` — see eks
-`modules/addon-iam/3-eso.tf`). No access keys anywhere. Requires the `eks-pod-identity-agent` addon.
+that **External Secrets Operator** mints. The minted token is used **under ESO's identity**, so
+the ESO role holds the ECR read perms on `helm/*` (not just `GetAuthorizationToken`) — see eks
+`modules/addon-iam/3-eso.tf`. No access keys anywhere. Requires the `eks-pod-identity-agent` addon.

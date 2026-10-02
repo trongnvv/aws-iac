@@ -24,11 +24,19 @@ resource "aws_iam_role_policy" "eso" {
         Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.eso_secret_path}"
       },
       {
-        # ECRAuthorizationToken generator — mints the ECR registry token for ArgoCD's OCI chart pull.
-        Sid      = "EcrTokenForArgocdOci"
+        # ECRAuthorizationToken generator mints the token for ArgoCD's OCI chart pull.
+        Sid      = "EcrAuth"
         Effect   = "Allow"
         Action   = "ecr:GetAuthorizationToken"
         Resource = "*"
+      },
+      {
+        # The minted token carries THIS role's identity, so the actual pull (ArgoCD using the
+        # token) is authorized as eso — it needs the chart-pull perms on helm/*, not just auth.
+        Sid      = "EcrPullHelmCharts"
+        Effect   = "Allow"
+        Action   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
+        Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/helm/*"
       },
     ]
   })
