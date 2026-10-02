@@ -1,17 +1,10 @@
-# gRPC connection load-balancing lab — 3 releases (server · client · shared gateway-infra) off
-# charts/app. Needs the AWS Load Balancer Controller (01-addons/02). See README.md.
+# grpc-debug: the app (server + client) is deployed via ArgoCD GitOps now
+# (gitlab trongnvv-platform/gitops/argo-simple → apps/grpc-conn-debug/*). Only the shared
+# gateway-infra stays here in IaC — GatewayClass is cluster-scoped platform infra, not app
+# workload, and the ArgoCD -02 gateways reference its LoadBalancerConfiguration by name.
+# server.yaml / client.yaml are kept as reference (live values are in the gitops repo).
 releases:
-  - name: grpc-server
-    namespace: grpc-debug
-    createNamespace: true
-    chart: ../../../../charts/app
-    needs:
-      - grpc-debug/gateway-infra   # GatewayClass + LoadBalancerConfiguration for the server's GRPCRoute
-    values:
-      - server.yaml
-
-  # Shared ALB Gateway API infra (GatewayClass + LoadBalancerConfiguration) — reused by the
-  # client -02 route and the server; separate so apps don't each re-declare it.
+  # Shared ALB Gateway API infra (GatewayClass + LoadBalancerConfiguration) for ns grpc-debug.
   - name: gateway-infra
     namespace: grpc-debug
     createNamespace: true
@@ -19,12 +12,16 @@ releases:
     values:
       - gateway-infra.yaml
 
-  - name: grpc-client
-    namespace: grpc-debug
-    createNamespace: true
-    chart: ../../../../charts/app
-    needs:
-      - grpc-debug/grpc-server
-      - grpc-debug/gateway-infra
-    values:
-      - client.yaml
+# server + client — deployed via ArgoCD, NOT here (would conflict on ns grpc-debug). Reference:
+#   - name: grpc-server
+#     namespace: grpc-debug
+#     createNamespace: true
+#     chart: ../../../../charts/app
+#     needs: [grpc-debug/gateway-infra]
+#     values: [server.yaml]
+#   - name: grpc-client
+#     namespace: grpc-debug
+#     createNamespace: true
+#     chart: ../../../../charts/app
+#     needs: [grpc-debug/grpc-server, grpc-debug/gateway-infra]
+#     values: [client.yaml]

@@ -65,6 +65,8 @@ uses the external-secrets controller's Pod Identity to fetch a fresh ECR token (
 Nothing to apply by hand.
 
 ## 6. Apply the Applications 🖐️
+The shared gateway-infra (GatewayClass + LoadBalancerConfiguration for the `-02` gateways) stays
+in IaC — deploy it first: ⚙️ `aws-iac/eks` `./deploy.sh 03-application`. Then the apps:
 ```bash
 kubectl apply -f apps/grpc-conn-debug/server.yaml   # from argo-simple
 kubectl apply -f apps/grpc-conn-debug/client.yaml
