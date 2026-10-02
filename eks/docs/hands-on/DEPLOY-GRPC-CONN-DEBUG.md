@@ -21,13 +21,14 @@ This is the runbook.
 The `eks-pod-identity-agent` addon must be on `eks-dev` — without it, ArgoCD/Image Updater
 get no ECR access.
 
-## 3. Apply the CI + Pod Identity (foundation/04-app-cicd) ⚙️
+## 3. Apply the CI pipeline (foundation/04-app-cicd) ⚙️
 ```bash
 cd aws-iac/foundation/04-app-cicd && tofu init && tofu apply
 ```
-Creates: CodePipeline `grpc-conn-debug`, CodeBuild (DinD), S3 artifact, and the Pod Identity
-roles/associations for `argocd-repo-server` + `argocd-image-updater`. Reuses the `03-cicd`
-GitLab connection. ⚠️ **03 must be applied before 04** (remote-state dependency).
+Creates: CodePipeline `grpc-conn-debug`, CodeBuild (DinD), S3 artifact. Reuses the `03-cicd`
+GitLab connection. ⚠️ **03 must be applied before 04** (remote-state dependency). **No cluster
+resources here** — the Image Updater + ESO ECR Pod Identity roles live in eks
+`00-infra/03-addon-iam` (applied with the cluster, step 0 prereq).
 
 ## 4. Deploy ArgoCD + Image Updater (eks platform) ⚙️
 ```bash

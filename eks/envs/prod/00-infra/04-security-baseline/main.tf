@@ -17,8 +17,7 @@ provider "aws" {
   profile = "default"
 }
 
-# prod OWNS the account-level security singletons (GuardDuty/Security Hub/Config).
-# Enable them in exactly one env per account.
+# Account-level security singletons (GuardDuty/Security Hub/Config) — enable in exactly one env per account.
 module "security_baseline" {
   source             = "../../../../modules/security-baseline"
   env                = "prod"

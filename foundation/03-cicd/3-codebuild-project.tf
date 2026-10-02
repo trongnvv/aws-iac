@@ -56,7 +56,6 @@ resource "aws_codebuild_project" "helm_chart" {
   depends_on = [aws_codebuild_source_credential.gitlab]
 }
 
-# Trigger on push to main.
 resource "aws_codebuild_webhook" "helm_chart" {
   project_name = aws_codebuild_project.helm_chart.name
 

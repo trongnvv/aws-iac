@@ -39,3 +39,4 @@ output "external_dns_role_arn" { value = module.addon_iam.external_dns_role_arn 
 output "keda_role_arn" { value = module.addon_iam.keda_role_arn }
 output "cert_manager_role_arn" { value = module.addon_iam.cert_manager_role_arn }
 output "kubecost_role_arn" { value = module.addon_iam.kubecost_role_arn }
+output "image_updater_role_arn" { value = module.addon_iam.image_updater_role_arn }

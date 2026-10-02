@@ -34,9 +34,7 @@ module "eks" {
   vpc_id         = data.terraform_remote_state.network.outputs.vpc_id
   app_subnet_ids = data.terraform_remote_state.network.outputs.app_subnet_ids
 
-  # SSO permission-set role(s) that need K8s access in the console (fixes "Unauthorized").
-  # Get the role ARN: AWS console shows the assumed-role; map it to the underlying
-  # AWSReservedSSO_* role ARN. Leave empty = only the cluster creator has admin.
+  # Principals granted K8s console admin; empty = only cluster creator.
   admin_principal_arns = [
     "arn:aws:iam::391511533175:root",
   ]

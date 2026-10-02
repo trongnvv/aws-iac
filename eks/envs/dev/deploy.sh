@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
-# Deploy the dev environment. By default runs all three layers in order; pass a
-# layer name to run just that one.
-#   ./deploy.sh                 # 00-infra -> 01-addons -> 02-platform
-#   ./deploy.sh 00-infra        # Terraform infra only (+ refresh outputs.cache.json)
-#   ./deploy.sh 01-addons       # core add-ons only (cluster must already be up)
-#   ./deploy.sh 02-platform     # platform services only
-#   ./deploy.sh 03-application   # application workloads only
-# Self-contained: every Helm value is hardcoded plain YAML, so there is no
-# `tofu output` wiring between the layers.
+# Deploy dev. No arg = all layers in order; or pass one: 00-infra|01-addons|02-platform|03-application.
 # Prereq: run ../../foundation/apply.sh once (state backend + shared ECR + DNS).
 set -euo pipefail
 export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
-mkdir -p "$TF_PLUGIN_CACHE_DIR"   # shared across every root — same provider version everywhere
+mkdir -p "$TF_PLUGIN_CACHE_DIR"
 export GODEBUG="${GODEBUG:+$GODEBUG,}http2client=0"   # tofu HTTP/2 provider downloads occasionally stall
 cd "$(dirname "$0")"
 REGION=ap-southeast-1
 CLUSTER=eks-dev
-GWAPI_VERSION=v1.6.0   # upstream Gateway API CRDs (matches LBC v3.5 conformance)
+GWAPI_VERSION=v1.6.0   # matches LBC v3.5 conformance
 
 LAYER="${1:-all}"
 case "$LAYER" in
@@ -31,9 +23,7 @@ if run 00-infra; then
     ( cd "$d" && tofu init && tofu apply -auto-approve )
   done
 
-  # Cache the real Terraform outputs into one file (keyed by root). Reference only —
-  # the helm values are hardcoded; diff this file to confirm they still match reality
-  # (cluster_name, vpc_id, karpenter queue/role, velero bucket, ...). Git-ignored.
+  # Reference cache (git-ignored); helm values are hardcoded — diff this to confirm they still match.
   echo "== cache infra outputs -> outputs.cache.json =="
   for d in 00-infra/*/; do
     ( cd "$d" && tofu output -json 2>/dev/null || echo '{}' ) | jq --arg k "$(basename "$d")" '{($k): .}'
@@ -44,10 +34,8 @@ if run 01-addons || run 02-platform || run 03-application; then
   echo "== wire kubeconfig =="
   aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
 
-  # Upstream Gateway API CRDs (gateway.networking.k8s.io: GatewayClass/Gateway/HTTPRoute/
-  # GRPCRoute) — applied before the addons so the LBC starts with them present. The LBC's
-  # OWN gateway.k8s.aws CRDs (LoadBalancerConfiguration/...) ship with the LBC chart, so no
-  # separate apply is needed here. Idempotent (server-side apply).
+  # Upstream Gateway API CRDs — applied before addons so LBC starts with them present.
+  # LBC's own gateway.k8s.aws CRDs ship with its chart. Idempotent (server-side apply).
   echo "== Gateway API CRDs (${GWAPI_VERSION}) =="
   kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GWAPI_VERSION}/standard-install.yaml"
 fi

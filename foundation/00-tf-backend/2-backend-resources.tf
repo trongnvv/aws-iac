@@ -2,7 +2,6 @@ resource "aws_s3_bucket" "state" {
   bucket = var.state_bucket_name
 }
 
-# Versioning = recover a corrupted/overwritten state file.
 resource "aws_s3_bucket_versioning" "state" {
   bucket = aws_s3_bucket.state.id
   versioning_configuration {
@@ -26,6 +25,3 @@ resource "aws_s3_bucket_public_access_block" "state" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
-
-# State locking uses the S3 backend's native lockfile (`use_lockfile = true`) —
-# no DynamoDB table needed (OpenTofu >= 1.10).

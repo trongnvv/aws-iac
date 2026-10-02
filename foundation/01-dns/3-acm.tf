@@ -1,6 +1,4 @@
-# Regional wildcard cert for the ALB (apex + *.domain — a wildcard doesn't cover
-# the apex, so request both). DNS-validated through the zone above. Prefer this
-# for ALB-terminated TLS over in-cluster cert-manager.
+# Regional wildcard cert for the ALB. Request apex + *.domain (wildcard doesn't cover apex).
 resource "aws_acm_certificate" "regional" {
   domain_name               = var.domain
   subject_alternative_names = ["*.${var.domain}"]
