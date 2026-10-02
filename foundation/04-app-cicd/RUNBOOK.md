@@ -25,9 +25,10 @@ Detailed commands live in the module READMEs referenced below — this is the or
 **D. GitLab token → secret** 🖐️ — PAT with `write_repository` on `argo-simple`, then apply the
 `repo-argo-simple` secret (argo-simple README §1). This is the only static secret.
 
-**E. ArgoCD → ECR chart auth** ⚠️ — pulling the `helm/app` OCI chart needs auth:
-- Current files use a **CronJob refresh** (argo-simple README §2) — ⚠️ fix the CronJob image to one with aws-cli + kubectl.
-- **Recommended:** switch to the **ECR credential helper** (identity, no CronJob) — needs a custom repo-server. *(not yet wired)*
+**E. ArgoCD → ECR chart auth** ⚙️ — handled by the **ECR credential helper** on argocd-repo-server
+(configured in `eks` `02-platform/00-argocd` values, applied by `./deploy.sh 02-platform`).
+Identity-based via Pod Identity — no static secret, no CronJob. ⚠️ verify live (helper version,
+initContainer image, that Helm OCI honors credHelpers).
 
 **F. Image Updater + apps** — Image Updater is a platform component: ⚙️ `aws-iac/eks`
 `./deploy.sh 02-platform` (dir `02-image-updater`). Then 🖐️ `kubectl apply
@@ -40,7 +41,7 @@ bumps the tag → ArgoCD deploys.
 ## Attention points
 1. **03 before 04** (remote-state dependency).
 2. **`eks-pod-identity-agent` addon** is required for all ECR access by ArgoCD pods.
-3. **ArgoCD ↔ ECR chart auth** — credential helper (identity) or CronJob; either way **verify live**.
+3. **ArgoCD ↔ ECR chart auth** — ECR credential helper (identity, in the argocd values); **verify live**.
 4. **Image Updater** `0.12.0` + `write-back-target: helmvalues:` on a multi-source app — **verify live**.
 5. ECR repos are **IMMUTABLE** — re-running the same commit pushes no new tag (not an error).
 
