@@ -17,11 +17,20 @@ resource "aws_iam_role_policy" "eso" {
   role = aws_iam_role.eso.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-      Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.eso_secret_path}"
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.eso_secret_path}"
+      },
+      {
+        # ECRAuthorizationToken generator — mints the ECR registry token for ArgoCD's OCI chart pull.
+        Sid      = "EcrTokenForArgocdOci"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+    ]
   })
 }
 

@@ -12,3 +12,13 @@ releases:
     wait: true
     values:
       - values.yaml
+
+  # ECR OCI repo secret for ArgoCD, minted + refreshed by External Secrets Operator.
+  # Needs the ESO CRDs (01-addons/05-external-secrets) — applied in an earlier layer.
+  - name: argocd-ecr-repo
+    namespace: argocd
+    chart: ../../../../charts/app
+    needs:
+      - argocd/argocd
+    values:
+      - ecr-repo-externalsecret.yaml

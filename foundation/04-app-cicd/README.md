@@ -2,14 +2,14 @@
 
 AWS-native CI for `trongnvv-platform/applications/grpc-conn-debug`: CodePipeline builds the
 server + client images and pushes them to ECR. CD is **not** here — ArgoCD + Image Updater
-own it (pull-based), see `gitops/argo-simple`. This module also grants the ArgoCD pods ECR
+own it (pull-based), see `gitops/argo-simple`. This module also grants **Image Updater** ECR
 access via Pod Identity (no static keys).
 
 | File | Resources |
 |---|---|
 | `2-codebuild.tf` | CodeBuild role + project (DinD, privilegedMode) |
 | `3-codepipeline.tf` | S3 artifact bucket, pipeline role, CodePipeline (Source→Build) |
-| `4-pod-identity.tf` | ECR-read roles + Pod Identity associations for `argocd-repo-server` and `argocd-image-updater` |
+| `4-pod-identity.tf` | ECR-read role + Pod Identity association for `argocd-image-updater` (tag polling) |
 
 Reuses the GitLab connection from `03-cicd` (already authorized) via remote state. ECR image
 repos are **self-provisioned** by the buildspec on first push (`grpc-conn-debug/*`, IMMUTABLE,
@@ -18,8 +18,8 @@ scan-on-push) — no dependency on `02-ecr`, same model as the helm chart pipeli
 ## Architecture
 
 `tofu apply` creates the CI side (CodeBuild role + project, S3 artifact bucket, CodePipeline
-role + pipeline) and the Pod Identity roles + associations for ArgoCD. CD (ArgoCD + Image
-Updater) is pull-based and lives in `gitops/argo-simple`. End to end:
+role + pipeline) and the Image Updater Pod Identity role. CD is pull-based (ArgoCD + Image
+Updater); ArgoCD pulls the chart via an ESO-minted repo secret. End to end:
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,8 @@ flowchart LR
     end
     subgraph EKS["EKS · eks-dev"]
       IU[Image Updater<br/>Pod Identity]
-      ARGO[ArgoCD<br/>Pod Identity]
+      ESO[External Secrets<br/>Pod Identity]
+      ARGO[ArgoCD]
       PODS[grpc server + client]
     end
     Dev -->|1 · push main| APP
@@ -52,6 +53,7 @@ flowchart LR
     IU -->|6 · poll tags| ECRIMG
     IU -->|7 · commit new tag| GITOPS
     ARGO -->|8 · read values| GITOPS
+    ESO -.->|ECR token → repo-ecr-helm| ARGO
     ARGO -->|8 · pull chart| ECRCHART
     ARGO -->|9 · sync| PODS
 ```
@@ -60,10 +62,10 @@ flowchart LR
 
 ### Setup
 1. `foundation/apply.sh` (or `cd 04-app-cicd && tofu init && tofu apply`) — creates the
-   pipeline, CodeBuild project, and Pod Identity roles/associations.
+   pipeline, CodeBuild project, and the Image Updater Pod Identity role/association.
 2. No OAuth step: the `gitlab` connection is reused from `03-cicd`.
-3. Cluster-side (secrets, Image Updater, OCI-repo refresh) lives in `gitops/argo-simple` —
-   see its README.
+3. Cluster-side: git token secret + apps in `gitops/argo-simple`; Argo CD + Image Updater +
+   the ESO-minted `repo-ecr-helm` secret in `eks 02-platform`.
 
 ### On each push to the app repo
 ```
@@ -89,7 +91,8 @@ Source → Build. The deploy path is fully decoupled.
   manifest, same gotcha as `03-cicd`.)
 
 ### Pod Identity, not static keys
-ArgoCD pods reach ECR through IAM roles bound to their ServiceAccounts (`pods.eks.amazonaws.com`
-trust). `argocd-repo-server` gets read on `helm/*` (pull the chart); `argocd-image-updater`
-gets read on `grpc-conn-debug/*` (poll tags). No access keys anywhere. Requires the
-`eks-pod-identity-agent` addon on the cluster.
+`argocd-image-updater` reaches ECR via an IAM role bound to its ServiceAccount
+(`pods.eks.amazonaws.com` trust) — read on `grpc-conn-debug/*` to poll tags. ArgoCD repo-server
+needs **no** Pod Identity here: it pulls the `helm/app` OCI chart via the `repo-ecr-helm` secret
+that **External Secrets Operator** mints (ESO holds `ecr:GetAuthorizationToken` — see eks
+`modules/addon-iam/3-eso.tf`). No access keys anywhere. Requires the `eks-pod-identity-agent` addon.

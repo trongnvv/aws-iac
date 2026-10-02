@@ -30,32 +30,6 @@ server:
     pathType: Prefix
     tls: false
 
-# Pull the helm/app OCI chart from ECR with NO static creds: the amazon-ecr-credential-helper
-# uses the repo-server Pod Identity (role eks-dev-argocd-ecr-read, foundation/04-app-cicd) to
-# fetch a registry token on demand. No repo secret, no CronJob refresh.
-# ⚠️ verify live: helper version, initContainer image, and that Helm OCI honors credHelpers here.
-repoServer:
-  serviceAccount:
-    create: true
-    name: argocd-repo-server # Pod Identity association targets this SA
-  initContainers:
-    - name: ecr-cred-helper
-      image: public.ecr.aws/docker/library/alpine:3.20
-      command: [sh, -c]
-      args:
-        - |
-          apk add --no-cache curl >/dev/null
-          curl -sLo /custom-tools/docker-credential-ecr-login \
-            https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/0.9.1/linux-amd64/docker-credential-ecr-login
-          chmod +x /custom-tools/docker-credential-ecr-login
-          mkdir -p /custom-tools/docker
-          echo '{"credHelpers":{"391511533175.dkr.ecr.ap-southeast-1.amazonaws.com":"ecr-login"}}' > /custom-tools/docker/config.json
-      volumeMounts:
-        - { name: custom-tools, mountPath: /custom-tools }
-  volumes:
-    - { name: custom-tools, emptyDir: {} }
-  volumeMounts:
-    - { name: custom-tools, mountPath: /usr/local/bin/docker-credential-ecr-login, subPath: docker-credential-ecr-login }
-    - { name: custom-tools, mountPath: /home/argocd/.docker, subPath: docker }
-  env:
-    - { name: DOCKER_CONFIG, value: /home/argocd/.docker }
+# The ECR OCI chart repo secret (repo-ecr-helm) is produced by External Secrets Operator — see
+# ecr-repo-externalsecret.yaml. repo-server just reads that standard repository secret: no
+# credential helper, no static token, no Pod Identity on repo-server.
