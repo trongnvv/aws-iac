@@ -311,6 +311,12 @@ Grafana → Explore → **AMP** → `{service_name="demo-checkout"}`; → **X-Ra
 Service Map shows `demo-checkout`.
 
 ## A4. Logs — Fluent Bit → CloudWatch Logs
+
+> ⏭️ **Optional.** The log path is the same mechanism in both parts (Fluent Bit DaemonSet
+> tailing `/var/log/containers` → CloudWatch Logs); only the packaging differs (config
+> ownership, log groups, retention). A and B really differ on **metrics** (AMP/PromQL vs
+> CloudWatch Metrics) and **traces** (manual OTLP vs auto-instrumentation). Short on time →
+> skip A4 and look at logs only in Part B (B3).
 ```bash
 helm repo add eks https://aws.github.io/eks-charts
 kubectl create namespace logging
