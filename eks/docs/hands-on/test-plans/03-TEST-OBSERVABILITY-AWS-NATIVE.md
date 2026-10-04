@@ -364,8 +364,62 @@ shows doing it yourself with Loki ↔ Tempo.
 - What does `resource_to_telemetry_conversion` change in the stored series?
 - AMP vs self-hosted Prometheus/Mimir: cost model, retention, who's on call?
 
+## A6b. Stretch — hello-express through Part A (same real app as B4)
+Part A uses telemetrygen; Part B uses a real, auto-instrumented app. To compare both on
+**the same app**, inject the OTel Node.js agent into hello-express with the community
+**OpenTelemetry Operator** and point it at the A3 ADOT collector. (Alternative: add the OTel
+SDK to hello-express's code — a code change, not covered here.)
+
+> ⚠️ Run this **before Part B**. The CloudWatch add-on ships its own operator that reacts to
+> the same `instrumentation.opentelemetry.io/inject-nodejs` annotation — two operators =
+> two mutating webhooks fighting over the same pods.
+
+Needs ADOT from A3 still running and cert-manager (`01-addons/04-cert-manager`) for the
+operator's webhook certificate.
+```bash
+helm install otel-operator open-telemetry/opentelemetry-operator \
+  -n opentelemetry-operator-system --create-namespace \
+  --set manager.collectorImage.repository=otel/opentelemetry-collector-contrib
+kubectl -n opentelemetry-operator-system rollout status deploy/otel-operator-opentelemetry-operator
+
+kubectl apply -f - <<'EOF'
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: to-adot
+  namespace: dev
+spec:
+  exporter:
+    endpoint: http://adot-opentelemetry-collector.opentelemetry:4318   # Node.js agent speaks OTLP/HTTP
+  propagators: [tracecontext, baggage]
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"                                                       # sample everything (lab)
+EOF
+
+# Namespace annotation — hello-express is Argo CD-managed (selfHeal) and its chart has no podAnnotations.
+kubectl annotate ns dev instrumentation.opentelemetry.io/inject-nodejs="true"
+kubectl -n dev rollout restart deploy
+kubectl -n dev get pods -o custom-columns='POD:.metadata.name,INIT:.spec.initContainers[*].name' | grep hello
+```
+✅ An `opentelemetry-auto-instrumentation-nodejs` init container on the hello-express pods.
+
+Generate traffic (same loop as B4), then:
+- Grafana → **X-Ray** → Service Map shows `hello-express` (real HTTP server spans, not
+  telemetrygen's fake ones).
+- Grafana → **AMP** → `{service_name="hello-express"}` — the agent's HTTP metrics.
+
+Compare with B4 later on the same app: what Application Signals gives on top (RED per
+operation, SLOs, trace ↔ log links) vs what you'd have to build in Grafana yourself here.
+
 ## A7. Cleanup Part A
 ```bash
+# A6b (if run) — remove first so Part B's add-on doesn't meet a second operator
+kubectl annotate ns dev instrumentation.opentelemetry.io/inject-nodejs- 2>/dev/null
+kubectl -n dev delete instrumentation to-adot 2>/dev/null
+helm uninstall otel-operator -n opentelemetry-operator-system 2>/dev/null && \
+  kubectl delete ns opentelemetry-operator-system
+kubectl -n dev rollout restart deploy                                  # drop the injected agent
 kubectl delete pod logger
 helm uninstall adot -n opentelemetry && kubectl delete ns opentelemetry
 helm uninstall aws-for-fluent-bit -n logging && kubectl delete ns logging
