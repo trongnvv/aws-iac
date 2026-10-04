@@ -36,8 +36,28 @@ for d in $(ls -d 01-addons/*/ 2>/dev/null | sort -r); do ( cd "$d" && helmfile d
 
 echo "== 00-infra (reverse) =="
 for d in $(ls -d 00-infra/*/ | sort -r); do
-  ( cd "$d" && tofu init >/dev/null 2>&1 && tofu destroy -auto-approve 2>/dev/null ) || true
+  targets=()
+  if [ "$d" = "00-infra/05-observability-aws/" ]; then
+    # Keep the AMP workspace: its ID is hardcoded in 02-platform values, and an idle
+    # workspace costs ~$0. Destroying the roles also destroys their dependents
+    # (policies, attachments, Pod Identity associations).
+    targets=(-target=module.observability_aws.aws_iam_role.amp_write
+             -target=module.observability_aws.aws_iam_role.fluent_bit
+             -target=module.observability_aws.aws_iam_role.grafana)
+  fi
+  ( cd "$d" && tofu init >/dev/null 2>&1 && tofu destroy -auto-approve ${targets[@]+"${targets[@]}"} 2>/dev/null ) || true
 done
+
+echo "== orphaned EBS volumes (from PVCs — not deleted by tofu destroy) =="
+ORPHANS=$(aws ec2 describe-volumes --region "$REGION" --filters Name=status,Values=available \
+  Name=tag:kubernetes.io/created-for/pvc/name,Values='*' \
+  --query 'Volumes[].[VolumeId,Size,Tags[?Key==`kubernetes.io/created-for/pvc/name`]|[0].Value]' --output text)
+if [ -n "$ORPHANS" ]; then
+  echo "$ORPHANS"
+  echo "⚠️  still billed (gp3 ~\$0.096/GB-month) — delete: aws ec2 delete-volume --volume-id <id>"
+else
+  echo "none"
+fi
 
 echo "== done: teardown dev =="
 echo "If 00-network still fails (VPC 'DependencyViolation'), orphaned ENIs remain — list them:"

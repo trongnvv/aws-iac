@@ -1,0 +1,30 @@
+# AWS-native observability collectors (test-plans/03 Part A — Prometheus flavor):
+#   ADOT        app OTLP → metrics to AMP, traces to X-Ray
+#   Fluent Bit  container stdout/stderr → CloudWatch Logs (/eks/eks-dev/containers)
+# Infra metrics go to AMP via kube-prometheus-stack remoteWrite (01-observability values).
+# IAM + Pod Identity: 00-infra/05-observability-aws (enable_aws_native_pipeline) — the
+# service account names below must match it.
+repositories:
+  - name: open-telemetry
+    url: https://open-telemetry.github.io/opentelemetry-helm-charts
+  - name: eks
+    url: https://aws.github.io/eks-charts
+
+releases:
+  - name: adot
+    namespace: opentelemetry
+    createNamespace: true
+    chart: open-telemetry/opentelemetry-collector
+    version: "0.175.0"
+    wait: true
+    values:
+      - adot-values.yaml
+
+  - name: aws-for-fluent-bit
+    namespace: logging
+    createNamespace: true
+    chart: eks/aws-for-fluent-bit
+    version: "0.2.0"
+    wait: true
+    values:
+      - fluent-bit-values.yaml

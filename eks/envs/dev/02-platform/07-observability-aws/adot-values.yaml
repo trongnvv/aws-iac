@@ -1,0 +1,37 @@
+# Upstream OpenTelemetry Collector, contrib image (sigv4auth + awsxray live there) — not
+# AWS's ADOT collector image; the release keeps the name `adot` because the Pod Identity SA
+# (adot-collector) and the plan refer to it.
+# Apps send OTLP to adot-opentelemetry-collector.opentelemetry:4317 (gRPC) / :4318 (HTTP).
+mode: deployment
+replicaCount: 1
+image:
+  repository: otel/opentelemetry-collector-contrib
+serviceAccount:
+  create: true
+  name: adot-collector               # Pod Identity association (05-observability-aws)
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }
+config:
+  extensions:
+    sigv4auth:
+      region: ap-southeast-1
+      service: aps
+  exporters:
+    prometheusremotewrite:
+      # AMP workspace survives teardown → stable ID. Set once from:
+      #   cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_remote_write_url
+      endpoint: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/api/v1/remote_write
+      auth:
+        authenticator: sigv4auth
+      resource_to_telemetry_conversion:
+        enabled: true                # service.name etc. become metric labels
+    awsxray:
+      region: ap-southeast-1
+  service:
+    extensions: [health_check, sigv4auth]   # keep health_check — liveness/readiness probes hit it
+    pipelines:
+      metrics:
+        exporters: [prometheusremotewrite]
+      traces:
+        exporters: [awsxray]

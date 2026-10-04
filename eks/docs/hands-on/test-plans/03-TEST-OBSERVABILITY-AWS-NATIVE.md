@@ -14,6 +14,41 @@ AWS-native comes in **two flavors** that overlap; this test runs both, one after
 | Control plane | EKS control-plane logs → CloudWatch Logs (shared by A and B) | ← same |
 | Portability | high — same collector/PromQL as the Grafana stack (test 05) | low — CloudWatch-only formats |
 
+### By component — agent → routing → storage
+Any observability pipeline splits into **agent** (collects at the source), **routing**
+(receives, enriches, filters, authenticates, exports) and **storage** (keeps + serves
+queries). Each cell says **what software runs, which image, who installs it, who owns its
+config** — the last column then says plainly what is the same and what differs.
+
+Install paths: Part A = Helm charts you pin and configure (helmfile in `02-platform/`).
+Part B = **one EKS add-on** (`amazon-cloudwatch-observability`, AWS's packaging of the Helm
+chart `aws-observability/amazon-cloudwatch-observability`) — AWS owns the manifests; you
+only pass add-on config. Images below are from `chart 0.2.0` (A) / add-on `v6.7.0` (B).
+
+| Component | Part A — Prometheus flavor | Part B — CloudWatch flavor | Same / different |
+|---|---|---|---|
+| **AGENT** | | | |
+| App traces + metrics (instrumentation) | Nothing by default — the app must embed the **OTel SDK** (code change). Lab uses `telemetrygen` to fake an app. A6b: **community OTel Operator** (chart `open-telemetry/opentelemetry-operator`) injects the **upstream** Node.js SDK | **AWS fork of the OTel Operator** (`cloudwatch-agent-operator:3.7.0`, from the add-on) injects **AWS's ADOT SDK** (`adot-autoinstrumentation-node:v0.12.0`; also Java · Python · .NET) | **Same:** OpenTelemetry SDK, OTLP protocol, injection mechanism (mutating webhook + init container, same `instrumentation.opentelemetry.io/inject-*` annotation). **Different:** SDK build (upstream vs AWS), operator (community vs AWS fork), and A injects nothing unless you add A6b |
+| Infra metrics | **Prometheus** (kube-prometheus-stack chart, `01-observability`) scrapes **kube-state-metrics** + **node-exporter** + kubelet/cAdvisor | **CloudWatch agent** (`cloudwatch-agent:1.300073.0`) DaemonSet — created by the add-on's operator from an `AmazonCloudWatchAgent` CR — reads kubelet/cAdvisor + kube API itself. No kube-state-metrics / node-exporter by default | **Different software** end to end |
+| Container logs | **Fluent Bit**, image `aws-for-fluent-bit:3.2.1` · DaemonSet `aws-for-fluent-bit` in `logging` · installed by Helm chart `eks/aws-for-fluent-bit` (`07-observability-aws`) · config = your values · SA `aws-for-fluent-bit` | **Fluent Bit**, image `aws-for-fluent-bit:3.4.16` · DaemonSet `fluent-bit` in `amazon-cloudwatch` · installed by the add-on · config = fixed by AWS · SA `cloudwatch-agent` | **Same:** software, image repo (`public.ecr.aws/aws-observability/aws-for-fluent-bit`), input (`tail /var/log/containers`). **Different:** installer (your chart vs add-on), version, who owns config, namespace/SA |
+| Node / OS logs | Not collected | Same `fluent-bit` DaemonSet as above, extra inputs: `systemd` (kubelet, containerd) + `tail` (`/var/log/messages`, `dmesg`) | **Different:** B only |
+| Control-plane logs | No agent — EKS itself, `enable_control_plane_logging` in `01-eks` | No agent — EKS itself, same setting | **Same** |
+| **ROUTING** | | | |
+| App traces | **OpenTelemetry Collector**, **upstream** image `otel/opentelemetry-collector-contrib` (release named `adot`, but **not** AWS's ADOT collector image) · Deployment in `opentelemetry` · chart `open-telemetry/opentelemetry-collector` · pipeline you write: `otlp → batch → awsxray` | **CloudWatch agent** (same DaemonSet as infra metrics; it embeds OTel Collector components) · receives OTLP from the injected SDK → X-Ray, and derives Application Signals RED metrics · config by AWS | **Same:** OTLP in, X-Ray out. **Different:** software (standalone OTel Collector vs CloudWatch agent), config owner, B adds App Signals |
+| App metrics | Same OTel Collector: `otlp → prometheusremotewrite` (SigV4) → AMP | CloudWatch agent → Application Signals metrics → CloudWatch Metrics | **Different** software and destination |
+| Infra metrics | Prometheus `remoteWrite` (SigV4) → AMP, **you filter** (`writeRelabelConfigs` allowlist) | CloudWatch agent writes **EMF log events** to `/aws/containerinsights/eks-dev/performance` → CloudWatch extracts metrics. No filter knob | **Different** mechanism |
+| Logs | Inside Fluent Bit: `kubernetes` filter (pod metadata) → `cloudwatch_logs` output → **1 group** `/eks/eks-dev/containers` | Inside Fluent Bit: `kubernetes` filter → `cloudwatch_logs` output → **3 groups** `application` · `dataplane` · `host` | **Same:** plugins and flow. **Different:** log-group layout |
+| Auth | EKS Pod Identity · **3 roles / 4 associations**: `amp-write` (OTel Collector + Prometheus), `fluent-bit`, `grafana-read` — created by OpenTofu (`05-observability-aws`) | EKS Pod Identity · **1 role** (`cloudwatch-agent`) shared by CloudWatch agent **and** Fluent Bit (both run as SA `cloudwatch-agent`) — association created by `aws eks create-addon` | **Same:** mechanism. **Different:** one role per component vs one shared role |
+| **STORAGE** | | | |
+| Metrics | **AMP** — Prometheus TSDB, query with PromQL | **CloudWatch Metrics** — namespaces `ContainerInsights` / `ApplicationSignals`, query with metric math | **Different** service |
+| Logs | **CloudWatch Logs** — retention 3 days (set in values) | **CloudWatch Logs** — retention **never expire** by default | **Same** service. **Different:** groups + retention |
+| Traces | **X-Ray** | **X-Ray** (+ Application Signals service / SLO views on top) | **Same** service |
+
+**Bottom line:** logs (agent, routing, store) and the trace store are the same in A and B —
+only packaging differs. What really differs is the **metrics path end to end**
+(Prometheus → AMP vs CloudWatch agent → EMF → CloudWatch Metrics) and **who instruments +
+routes app telemetry** (you: SDK + your OTel Collector config vs the add-on, automatically).
+
 > 💸 AMP, CloudWatch Logs, Container Insights and X-Ray all bill per volume. Run each part
 > and its cleanup **the same day**.
 
@@ -100,202 +135,55 @@ aws logs describe-log-groups --log-group-name-prefix /aws/eks/eks-dev
 
 # Part A — Prometheus flavor
 
-## A1. IAM — extend `modules/observability-aws`
-The module has the AMP workspace + `<cluster>-amp-write` role (SA `opentelemetry/adot-collector`).
-Add to `2-amp.tf` (all `count = var.enable_amp ? 1 : 0`):
+Part A is **in code**, deployed by `envs/dev/deploy.sh` like any other layer:
 
-```hcl
-# ADOT also ships traces → X-Ray.
-resource "aws_iam_role_policy_attachment" "adot_xray" {
-  count      = var.enable_amp ? 1 : 0
-  role       = aws_iam_role.amp_write[0].name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess"
-}
+| Piece | Where |
+|---|---|
+| AMP workspace + IAM roles + Pod Identity (ADOT, Prometheus, Fluent Bit, Grafana) | `modules/observability-aws` · `envs/dev/00-infra/05-observability-aws` (`enable_amp` + `enable_aws_native_pipeline`) |
+| Infra metrics → AMP (`remoteWrite`, allowlist) · Grafana SigV4 + AMP/CloudWatch/X-Ray datasources | `envs/dev/02-platform/01-observability/values.yaml` |
+| ADOT collector · Fluent Bit | `envs/dev/02-platform/07-observability-aws/` |
 
-# kube-prometheus-stack Prometheus remote-writes to AMP with the same role.
-resource "aws_eks_pod_identity_association" "prometheus" {
-  count           = var.enable_amp ? 1 : 0
-  cluster_name    = var.cluster_name
-  namespace       = "monitoring"
-  service_account = "kube-prometheus-stack-prometheus"
-  role_arn        = aws_iam_role.amp_write[0].arn
-}
-```
-Add `3-logs.tf` (Fluent Bit write) and `4-grafana.tf` (Grafana read):
-```hcl
-locals {
-  pod_trust = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "pods.eks.amazonaws.com" }
-      Action    = ["sts:AssumeRole", "sts:TagSession"]
-    }]
-  })
-}
+`teardown.sh` destroys only the IAM side of `05-observability-aws` and **keeps the AMP
+workspace** (idle ≈ $0), so its ID — hardcoded in the Helm values — stays valid across
+redeploys. It also lists EBS volumes orphaned by PVCs at the end.
 
-resource "aws_iam_role" "fluent_bit" {
-  count              = var.enable_amp ? 1 : 0
-  name               = "${var.cluster_name}-fluent-bit"
-  assume_role_policy = local.pod_trust
-}
-
-resource "aws_iam_role_policy" "fluent_bit" {
-  count = var.enable_amp ? 1 : 0
-  name  = "cloudwatch-logs-write"
-  role  = aws_iam_role.fluent_bit[0].id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
-                "logs:DescribeLogStreams", "logs:PutRetentionPolicy"]
-      Resource = "*"
-    }]
-  })
-}
-
-resource "aws_eks_pod_identity_association" "fluent_bit" {
-  count           = var.enable_amp ? 1 : 0
-  cluster_name    = var.cluster_name
-  namespace       = "logging"
-  service_account = "aws-for-fluent-bit"
-  role_arn        = aws_iam_role.fluent_bit[0].arn
-}
-```
-```hcl
-# Grafana (kps) reads AMP + CloudWatch + X-Ray. Kept on for Part B too.
-resource "aws_iam_role" "grafana" {
-  count              = var.enable_amp ? 1 : 0
-  name               = "${var.cluster_name}-grafana-read"
-  assume_role_policy = local.pod_trust
-}
-
-resource "aws_iam_role_policy_attachment" "grafana" {
-  for_each = var.enable_amp ? toset([
-    "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess",
-    "arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess",
-    "arn:aws:iam::aws:policy/AWSXrayReadOnlyAccess",
-  ]) : toset([])
-  role       = aws_iam_role.grafana[0].name
-  policy_arn = each.value
-}
-
-resource "aws_eks_pod_identity_association" "grafana" {
-  count           = var.enable_amp ? 1 : 0
-  cluster_name    = var.cluster_name
-  namespace       = "monitoring"
-  service_account = "kube-prometheus-stack-grafana"
-  role_arn        = aws_iam_role.grafana[0].arn
-}
-```
+## A1. Wire the AMP URL (once)
+The §1 deploy created the workspace, but the Helm values still hold `ws-REPLACE-ME`
+(remote-write just errors until fixed):
 ```bash
-cd envs/dev/00-infra/05-observability-aws
-tofu apply -var enable_amp=true
-AMP_URL=$(tofu output -raw amp_remote_write_url)           # .../workspaces/ws-xxx/api/v1/remote_write
-AMP_ENDPOINT=${AMP_URL%api/v1/remote_write}                # .../workspaces/ws-xxx/
+( cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_workspace_arn )   # …:workspace/ws-xxxx
+WS=ws-xxxx                                                                            # from the line above
+grep -rl ws-REPLACE-ME envs/dev/02-platform | xargs sed -i "s/ws-REPLACE-ME/$WS/"      # 3 places, 2 files
+git diff --stat envs/dev/02-platform                                                  # commit it — stable from now on
+envs/dev/deploy.sh 02-platform
+```
+✅ Checks:
+```bash
 aws eks list-pod-identity-associations --cluster-name eks-dev \
   --query 'associations[].[namespace,serviceAccount]' --output table
-cd -
 ```
-✅ 4 new associations: `opentelemetry/adot-collector` · `monitoring/kube-prometheus-stack-prometheus`
-· `logging/aws-for-fluent-bit` · `monitoring/kube-prometheus-stack-grafana`.
-
-> ⚠️ The env root doesn't pass `enable_amp`, so a later plain `tofu apply` turns it all off
-> again — that's the cleanup path (§A7).
+4 rows: `opentelemetry/adot-collector` · `monitoring/kube-prometheus-stack-prometheus` ·
+`monitoring/kube-prometheus-stack-grafana` · `logging/aws-for-fluent-bit`.
+Pods started **before** their association existed have no credentials →
+`kubectl -n <ns> rollout restart …` fixes it.
 
 ## A2. Metrics — infra: Prometheus `remoteWrite` → AMP
 Infra metrics (kube-state-metrics, node-exporter, kubelet/cAdvisor) are already scraped by
-kps Prometheus, so forward them instead of scraping twice. In
-`envs/dev/02-platform/01-observability/values.yaml`, add under the existing `prometheus:` key:
-```yaml
-prometheus:
-  prometheusSpec:
-    remoteWrite:
-      - url: <AMP_URL>            # paste the value from A1 (values are hardcoded YAML)
-        sigv4:
-          region: ap-southeast-1
-```
-Grafana side (merge into the existing `grafana:` key; `<AMP_ENDPOINT>` from A1):
-```yaml
-grafana:
-  grafana.ini:
-    auth:
-      sigv4_auth_enabled: true
-  plugins:
-    - grafana-x-ray-datasource
-  additionalDataSources:
-    - name: AMP
-      type: prometheus
-      url: <AMP_ENDPOINT>
-      jsonData:
-        httpMethod: POST
-        sigV4Auth: true
-        sigV4AuthType: default        # AWS SDK chain → Pod Identity
-        sigV4Region: ap-southeast-1
-    - name: CloudWatch
-      type: cloudwatch
-      jsonData:
-        authType: default
-        defaultRegion: ap-southeast-1
-    - name: X-Ray
-      type: grafana-x-ray-datasource
-      jsonData:
-        authType: default
-        defaultRegion: ap-southeast-1
-```
+kps Prometheus, so they're forwarded, not scraped twice. `writeRelabelConfigs` keeps ~9
+metric names — AMP bills per sample, and the full kps set is ~50–100k series
+(≈ $13–26/day) vs a few thousand here.
 ```bash
-( cd envs/dev/02-platform/01-observability && helmfile apply )
-kubectl -n monitoring rollout restart deploy/kube-prometheus-stack-grafana   # pick up Pod Identity creds
-kubectl -n monitoring logs prometheus-kube-prometheus-stack-prometheus-0 -c prometheus | grep -i remote
+kubectl -n monitoring logs prometheus-kube-prometheus-stack-prometheus-0 -c prometheus | grep -iE "remote|403|401"
 ```
-✅ No `403`/`401` in Prometheus logs. Grafana → Explore → **AMP** → `up` returns the same
-targets as the in-cluster Prometheus.
+✅ No `403`/`401`. Grafana → Explore → **AMP** → `up` returns the same targets as the
+in-cluster Prometheus; `node_disk_io_time_seconds_total` returns **nothing** (filtered).
 
 ## A3. Metrics (app) + traces — ADOT → AMP + X-Ray
-```bash
-kubectl create namespace opentelemetry
-kubectl -n opentelemetry create serviceaccount adot-collector
-
-cat > /tmp/adot-values.yaml <<EOF
-mode: deployment
-image:
-  repository: otel/opentelemetry-collector-contrib   # sigv4auth + awsxray live in contrib
-serviceAccount:
-  create: false
-  name: adot-collector
-config:
-  extensions:
-    sigv4auth:
-      region: ap-southeast-1
-      service: aps
-  exporters:
-    prometheusremotewrite:
-      endpoint: ${AMP_URL}
-      auth:
-        authenticator: sigv4auth
-      resource_to_telemetry_conversion:
-        enabled: true                 # service.name etc. become metric labels
-    awsxray:
-      region: ap-southeast-1
-  service:
-    extensions: [health_check, sigv4auth]   # keep health_check — probes hit it
-    pipelines:
-      metrics:
-        exporters: [prometheusremotewrite]
-      traces:
-        exporters: [awsxray]
-EOF
-grep endpoint /tmp/adot-values.yaml          # AMP_URL must be expanded
-
-helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm install adot open-telemetry/opentelemetry-collector -n opentelemetry -f /tmp/adot-values.yaml
-kubectl -n opentelemetry get pods,svc
-```
-Generate telemetry (no app code needed — `telemetrygen` speaks OTLP):
+ADOT receives OTLP on `adot-opentelemetry-collector.opentelemetry:4317` (gRPC) / `:4318`
+(HTTP). Generate telemetry — no app code needed, `telemetrygen` speaks OTLP:
 ```bash
 TG=ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
-OTLP=adot-opentelemetry-collector.opentelemetry:4317   # confirm the svc name from `get svc`
+OTLP=adot-opentelemetry-collector.opentelemetry:4317
 kubectl run tg-traces  --rm -it --restart=Never --image=$TG -- \
   traces  --otlp-endpoint=$OTLP --otlp-insecure --duration=60s --rate=5 --service=demo-checkout
 kubectl run tg-metrics --rm -it --restart=Never --image=$TG -- \
@@ -312,32 +200,14 @@ Service Map shows `demo-checkout`.
 
 ## A4. Logs — Fluent Bit → CloudWatch Logs
 
-> ⏭️ **Optional.** The log path is the same mechanism in both parts (Fluent Bit DaemonSet
-> tailing `/var/log/containers` → CloudWatch Logs); only the packaging differs (config
-> ownership, log groups, retention). A and B really differ on **metrics** (AMP/PromQL vs
-> CloudWatch Metrics) and **traces** (manual OTLP vs auto-instrumentation). Short on time →
-> skip A4 and look at logs only in Part B (B3).
-```bash
-helm repo add eks https://aws.github.io/eks-charts
-kubectl create namespace logging
-cat > /tmp/fluent-bit-values.yaml <<'EOF'
-serviceAccount:
-  create: true
-  name: aws-for-fluent-bit          # must match the A1 association
-cloudWatchLogs:
-  enabled: true
-  region: ap-southeast-1
-  logGroupName: /eks/eks-dev/containers
-  autoCreateGroup: true
-  logRetentionDays: 3
-firehose:      { enabled: false }
-kinesis:       { enabled: false }
-elasticsearch: { enabled: false }
-EOF
-helm install aws-for-fluent-bit eks/aws-for-fluent-bit -n logging -f /tmp/fluent-bit-values.yaml
-```
-(Key names drift between chart versions — `helm show values eks/aws-for-fluent-bit | less` if one is ignored.)
+> ⏭️ **Optional checks.** The log path is the same mechanism in both parts (Fluent Bit
+> DaemonSet tailing `/var/log/containers` → CloudWatch Logs); only the packaging differs
+> (config ownership, log groups, retention). A and B really differ on **metrics** (AMP/PromQL
+> vs CloudWatch Metrics) and **traces** (manual OTLP vs auto-instrumentation). Short on time →
+> skip this step and look at logs only in Part B (B3).
 
+Fluent Bit writes every container's stdout/stderr to `/eks/eks-dev/containers` (3-day
+retention; IAM scoped to `/eks/eks-dev/*`).
 ```bash
 kubectl run logger --image=busybox --restart=Never -- \
   sh -c 'i=0; while true; do echo "order=$i status=ok"; i=$((i+1)); sleep 2; done'
@@ -413,6 +283,8 @@ Compare with B4 later on the same app: what Application Signals gives on top (RE
 operation, SLOs, trace ↔ log links) vs what you'd have to build in Grafana yourself here.
 
 ## A7. Cleanup Part A
+Part A is part of the dev layers, so the normal path is **`envs/dev/teardown.sh`** (keeps
+the AMP workspace, drops the IAM). To stop paying for ingestion while keeping the cluster:
 ```bash
 # A6b (if run) — remove first so Part B's add-on doesn't meet a second operator
 kubectl annotate ns dev instrumentation.opentelemetry.io/inject-nodejs- 2>/dev/null
@@ -420,15 +292,14 @@ kubectl -n dev delete instrumentation to-adot 2>/dev/null
 helm uninstall otel-operator -n opentelemetry-operator-system 2>/dev/null && \
   kubectl delete ns opentelemetry-operator-system
 kubectl -n dev rollout restart deploy                                  # drop the injected agent
+
 kubectl delete pod logger
-helm uninstall adot -n opentelemetry && kubectl delete ns opentelemetry
-helm uninstall aws-for-fluent-bit -n logging && kubectl delete ns logging
+( cd envs/dev/02-platform/07-observability-aws && helmfile destroy )   # ADOT + Fluent Bit
+kubectl -n monitoring patch prometheus kube-prometheus-stack-prometheus \
+  --type=json -p '[{"op":"remove","path":"/spec/remoteWrite"}]'       # until next helmfile apply
 aws logs delete-log-group --log-group-name /eks/eks-dev/containers
-git -C ~/src/github/trongnvv/aws-iac checkout -- eks/envs/dev/02-platform/01-observability/values.yaml
-( cd envs/dev/02-platform/01-observability && helmfile apply )        # drop remoteWrite + AWS datasources
-# Keep A1 IAM applied if going straight to Part B (Grafana read role is reused); otherwise:
-( cd envs/dev/00-infra/05-observability-aws && tofu apply )            # enable_amp → false
 ```
+Part B reuses the Grafana read role and datasources — keep `05-observability-aws` applied.
 
 ---
 
@@ -442,7 +313,7 @@ Add to `modules/observability-aws` (new var `enable_container_insights`, default
 resource "aws_iam_role" "cloudwatch_agent" {
   count              = var.enable_container_insights ? 1 : 0
   name               = "${var.cluster_name}-cloudwatch-agent"
-  assume_role_policy = local.pod_trust
+  assume_role_policy = local.pod_identity_trust
 }
 
 resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
@@ -458,11 +329,12 @@ output "cloudwatch_agent_role_arn" {
   value = var.enable_container_insights ? aws_iam_role.cloudwatch_agent[0].arn : null
 }
 ```
-(Re-export the output from the env root.) No association here — the add-on creates it (B2);
-declaring both conflicts. `pod_trust` local lives in `3-logs.tf` from A1.
+Set `enable_container_insights = true` in the dev root's module block and re-export the
+output there. No association here — the add-on creates it (B2); declaring both conflicts.
+`local.pod_identity_trust` is defined in `2-amp.tf`.
 ```bash
 cd envs/dev/00-infra/05-observability-aws
-tofu apply -var enable_amp=true -var enable_container_insights=true   # enable_amp keeps the Grafana read role
+tofu apply
 CW_ROLE=$(tofu output -raw cloudwatch_agent_role_arn)
 cd -
 ```
@@ -528,7 +400,8 @@ kubectl -n dev rollout restart deploy
 aws eks delete-addon --cluster-name eks-dev --addon-name amazon-cloudwatch-observability
 for g in application dataplane host performance; do
   aws logs delete-log-group --log-group-name /aws/containerinsights/eks-dev/$g; done
-( cd envs/dev/00-infra/05-observability-aws && tofu apply )   # both flags → false
+# enable_container_insights = false in the dev root, then:
+( cd envs/dev/00-infra/05-observability-aws && tofu apply )
 ```
 Control-plane logs (§1.1): set `enable_control_plane_logging = false` back, `tofu apply` in
 `01-eks`, and delete `/aws/eks/eks-dev/cluster` if not needed.

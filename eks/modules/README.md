@@ -12,7 +12,7 @@ Reusable OpenTofu building blocks. Each is pure — inputs → resources → out
 | `karpenter-infra` | node IAM role, instance profile, SQS interruption queue | karpenter_queue_name, karpenter_node_iam_role_name |
 | `addon-iam` | Pod Identity roles: LBC, ESO, external-dns, KEDA, cert-manager, kubecost | *_role_arn |
 | `security-baseline` | GuardDuty, CloudTrail, Config, Security Hub (account-level singletons) | — |
-| `observability-aws` | Amazon Managed Prometheus workspace + IAM | amp_workspace_arn, amp_remote_write_url |
+| `observability-aws` | AMP workspace + Pod Identity roles (ADOT/Prometheus → AMP + X-Ray, Fluent Bit → CloudWatch Logs, Grafana read) | amp_workspace_arn, amp_remote_write_url, amp_endpoint |
 | `backup-aws` | Velero S3 bucket + IAM | velero_bucket, velero_role_arn |
 | `waf` | regional web ACL for the ALB | web_acl_arn |
 

@@ -1,0 +1,14 @@
+# Tails /var/log/containers on every node → one CloudWatch log group, short retention.
+serviceAccount:
+  create: true
+  name: aws-for-fluent-bit           # Pod Identity association (05-observability-aws)
+cloudWatchLogs:
+  enabled: true
+  region: ap-southeast-1
+  logGroupName: /eks/eks-dev/containers   # IAM policy scopes writes to /eks/eks-dev/*
+  autoCreateGroup: true
+  logRetentionDays: 3
+cloudWatch:    { enabled: false }    # legacy Go plugin — superseded by cloudWatchLogs
+firehose:      { enabled: false }
+kinesis:       { enabled: false }
+elasticsearch: { enabled: false }

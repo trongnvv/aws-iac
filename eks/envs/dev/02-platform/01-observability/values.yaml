@@ -21,8 +21,49 @@ grafana:
       alb.ingress.kubernetes.io/healthcheck-path: /api/health
     hosts:
       - grafana.trongnv.space
+  # AWS datasources (test-plans/03 Part A). Credentials = AWS SDK default chain → Pod
+  # Identity role `eks-dev-grafana-read` (00-infra/05-observability-aws).
+  grafana.ini:
+    auth:
+      sigv4_auth_enabled: true
+  plugins:
+    - grafana-x-ray-datasource
+  additionalDataSources:
+    - name: AMP
+      type: prometheus
+      # AMP workspace survives teardown → stable ID. Set once from:
+      #   cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_endpoint
+      url: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/
+      jsonData:
+        httpMethod: POST
+        sigV4Auth: true
+        sigV4AuthType: default
+        sigV4Region: ap-southeast-1
+    - name: CloudWatch
+      type: cloudwatch
+      jsonData:
+        authType: default
+        defaultRegion: ap-southeast-1
+    - name: X-Ray
+      type: grafana-x-ray-datasource
+      jsonData:
+        authType: default
+        defaultRegion: ap-southeast-1
 
 prometheus:
+  prometheusSpec:
+    # Forward a small, fixed set of infra metrics to AMP (Pod Identity role
+    # `eks-dev-amp-write`). AMP bills per sample: the full kube-prometheus-stack set is
+    # ~50–100k series ≈ $13–26/day; this allowlist is a few thousand series.
+    remoteWrite:
+      - url: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/api/v1/remote_write
+        sigv4:
+          region: ap-southeast-1
+        writeRelabelConfigs:
+          - sourceLabels: [__name__]
+            action: keep
+            regex: >-
+              up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|kube_pod_status_phase|kube_pod_container_status_restarts_total|kube_deployment_status_replicas_available|node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes
   ingress:
     enabled: true
     ingressClassName: alb
