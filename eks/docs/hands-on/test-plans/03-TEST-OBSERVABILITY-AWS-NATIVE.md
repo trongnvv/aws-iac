@@ -36,7 +36,7 @@ only pass add-on config. Images below are from `chart 0.2.0` (A) / add-on `v6.7.
 | **ROUTING** | | | |
 | App traces | **OpenTelemetry Collector**, **upstream** image `otel/opentelemetry-collector-contrib` (release named `adot`, but **not** AWS's ADOT collector image) · Deployment in `opentelemetry` · chart `open-telemetry/opentelemetry-collector` · pipeline you write: `otlp → batch → awsxray` | **CloudWatch agent** (same DaemonSet as infra metrics; it embeds OTel Collector components) · receives OTLP from the injected SDK → X-Ray, and derives Application Signals RED metrics · config by AWS | **Same:** OTLP in, X-Ray out. **Different:** software (standalone OTel Collector vs CloudWatch agent), config owner, B adds App Signals |
 | App metrics | Same OTel Collector: `otlp → prometheusremotewrite` (SigV4) → AMP | CloudWatch agent → Application Signals metrics → CloudWatch Metrics | **Different** software and destination |
-| Infra metrics | Prometheus `remoteWrite` (SigV4) → AMP, **you filter** (`writeRelabelConfigs` allowlist) | CloudWatch agent writes **EMF log events** to `/aws/containerinsights/eks-dev/performance` → CloudWatch extracts metrics. No filter knob | **Different** mechanism |
+| Infra metrics | Prometheus `remoteWrite` (SigV4) → AMP (full set; **you can filter** with an optional `writeRelabelConfigs` keep-list) | CloudWatch agent writes **EMF log events** to `/aws/containerinsights/eks-dev/performance` → CloudWatch extracts metrics. No filter knob | **Different** mechanism |
 | Logs | Inside Fluent Bit: `kubernetes` filter (pod metadata) → `cloudwatch_logs` output → **1 group** `/eks/eks-dev/containers` | Inside Fluent Bit: `kubernetes` filter → `cloudwatch_logs` output → **3 groups** `application` · `dataplane` · `host` | **Same:** plugins and flow. **Different:** log-group layout |
 | Auth | EKS Pod Identity · **3 roles / 4 associations**: `amp-write` (OTel Collector + Prometheus), `fluent-bit`, `grafana-read` — created by OpenTofu (`05-observability-aws`) | EKS Pod Identity · **1 role** (`cloudwatch-agent`) shared by CloudWatch agent **and** Fluent Bit (both run as SA `cloudwatch-agent`) — association created by `aws eks create-addon` | **Same:** mechanism. **Different:** one role per component vs one shared role |
 | **STORAGE** | | | |
@@ -140,7 +140,7 @@ Part A is **in code**, deployed by `envs/dev/deploy.sh` like any other layer:
 | Piece | Where |
 |---|---|
 | AMP workspace + IAM roles + Pod Identity (ADOT, Prometheus, Fluent Bit, Grafana) | `modules/observability-aws` · `envs/dev/00-infra/05-observability-aws` (`enable_amp`) |
-| Infra metrics → AMP (`remoteWrite`, allowlist) · Grafana SigV4 + AMP/CloudWatch/X-Ray datasources | `envs/dev/02-platform/01-observability/values.yaml` |
+| Infra metrics → AMP (`remoteWrite`, full set) · Grafana SigV4 + AMP/CloudWatch/X-Ray datasources | `envs/dev/02-platform/01-observability/values.yaml` |
 | ADOT collector · Fluent Bit | `envs/dev/02-platform/07-observability-aws/` |
 
 `teardown.sh` destroys only the IAM side of `05-observability-aws` and **keeps the AMP
@@ -169,14 +169,15 @@ Pods started **before** their association existed have no credentials →
 
 ## A2. Metrics — infra: Prometheus `remoteWrite` → AMP
 Infra metrics (kube-state-metrics, node-exporter, kubelet/cAdvisor) are already scraped by
-kps Prometheus, so they're forwarded, not scraped twice. `writeRelabelConfigs` keeps ~9
-metric names — AMP bills per sample, and the full kps set is ~50–100k series
-(≈ $13–26/day) vs a few thousand here.
+kps Prometheus, so they're forwarded, not scraped twice. The **full** set is sent — no allowlist.
+⚠️ AMP bills per sample, and the full kps set is ~50–100k series (≈ $13–26/day). If cost matters,
+re-add a `writeRelabelConfigs` keep-list in `02-platform/01-observability/values.yaml` to trim to
+the metrics you actually query.
 ```bash
 kubectl -n monitoring logs prometheus-kube-prometheus-stack-prometheus-0 -c prometheus | grep -iE "remote|403|401"
 ```
-✅ No `403`/`401`. Grafana → Explore → **AMP** → `up` returns the same targets as the
-in-cluster Prometheus; `node_disk_io_time_seconds_total` returns **nothing** (filtered).
+✅ No `403`/`401`. Grafana → Explore → **AMP** → `up` returns the same targets as the in-cluster
+Prometheus; `node_disk_io_time_seconds_total` now returns data too (nothing filtered out).
 
 ## A3. Metrics (app) + traces — ADOT → AMP + X-Ray
 ADOT receives OTLP on `adot-opentelemetry-collector.opentelemetry:4317` (gRPC) / `:4318`
@@ -315,14 +316,32 @@ What the IaC creates (`5-alerting.tf`, gated by `enable_alerting`):
 - **SNS topic per team + `default`** (+ topic policy letting `aps.amazonaws.com` publish).
 - **AWS Chatbot** (Slack) per team — only when `alert_slack_workspace_id` + `alert_teams[*].slack_channel_id` are set.
 
-Manual / verify:
+Deploy: it's in code — `enable_alerting = true` in `00-infra/05-observability-aws`, rules in
+`rules/*.yaml`. `( cd envs/dev/00-infra/05-observability-aws && tofu apply )` creates the SNS topics,
+rule groups and the Alert Manager definition.
+
+Verify:
+```bash
+WS=$(cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_workspace_arn | sed 's#.*/##')
+aws amp list-rule-groups-namespaces --workspace-id "$WS"          # rule group landed
+aws amp describe-alert-manager-definition --workspace-id "$WS"    # route tree + sns receivers
+aws sns list-topics --query "Topics[?contains(TopicArn,'eks-dev-alerts')].TopicArn" --output text
+# end-to-end SNS leg: subscribe + publish a test (default topic)
+DEF=$(aws sns list-topics --query "Topics[?ends_with(TopicArn,'eks-dev-alerts-default')].TopicArn" --output text)
+aws sns subscribe --topic-arn "$DEF" --protocol email --notification-endpoint you@example.com   # confirm via email
+aws sns publish --topic-arn "$DEF" --subject "test" --message "hello from alerting"
+```
+✅ rule-group + alert-manager exist in AMP; the test publish arrives at the subscribed endpoint.
+A real rule→route path (e.g. `TargetDown`) fires after its `for:` window — slower, so the SNS
+publish above is the quick plumbing check.
+
+Manual / notes:
 - 🖐️ **Chatbot Slack**: authorize the Slack workspace once in the AWS Chatbot console → pass its
   workspace id as `alert_slack_workspace_id`, each channel id in `alert_teams`. Chatbot's API is
   **us-east-1** — add a us-east-1 provider alias in the env root if apply complains.
 - ⚠️ **team routing** needs a `team` label on the series — add it via remote-write relabeling
   (namespace → team); without it, alerts go to `sns-default`.
 - On-call (not in IaC): subscribe **Incident Manager** or **PagerDuty** to the same SNS topic.
-- Verify: `aws sns list-topics | grep alerts`; fire a test alert and watch SNS/Chatbot.
 
 Alternative (Grafana-centric, closer to the old setup): skip AMP AlertManager and use the Grafana
 you deploy — **Grafana unified alerting** (rules) + **notification policies** (route by label →

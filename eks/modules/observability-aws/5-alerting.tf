@@ -57,13 +57,15 @@ resource "aws_prometheus_rule_group_namespace" "this" {
 resource "aws_prometheus_alert_manager_definition" "this" {
   count        = local.alerting ? 1 : 0
   workspace_id = aws_prometheus_workspace.this[0].id
+  # AMP wants `alertmanager_config` as a YAML *string* (the Alertmanager config), not a nested map
+  # → inner yamlencode renders the config to a string, outer wraps it under the key.
   definition = yamlencode({
-    alertmanager_config = {
+    alertmanager_config = yamlencode({
       route = {
         receiver = "sns-default"
         group_by = ["alertname", "team"]
         routes = [for t in keys(var.alert_teams) : {
-          matchers = ["team = ${t}"]
+          matchers = [format("team=%q", t)]
           receiver = "sns-${t}"
         }]
       }
@@ -74,7 +76,7 @@ resource "aws_prometheus_alert_manager_definition" "this" {
           sigv4     = { region = var.region }
         }]
       }]
-    }
+    })
   })
 }
 
