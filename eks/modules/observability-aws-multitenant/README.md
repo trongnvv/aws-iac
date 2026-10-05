@@ -1,22 +1,29 @@
 # modules/observability-aws-multitenant — DRAFT
 
-Multi-tenant AWS-native metrics (see `docs/OBSERVABILITY.md` §7, approach A). **Draft — not wired
-into any env.** Swaps the single-workspace `observability-aws` module for **one AMP workspace per
-team**: tenant → workspace. Keep this until we actually go multi-team.
+Multi-tenant AWS-native metrics (see `docs/OBSERVABILITY.md` §7). **Draft — not wired into any env.**
+One AMP **workspace per team** (tenant → workspace), with **hard write AND read isolation in IAM**:
+each team's collector writes only to its workspace, and each team's Grafana reads only its workspace.
 
-**Scope — this module is AWS-only.** It creates, per team in `var.teams`: an AMP workspace, an
-`amp-write` IAM role scoped to that workspace, and the Pod Identity binding — **that's it** (plus one
-shared `grafana-read` role that can query *all* workspaces). It does **not** create Grafana orgs,
-datasources, users, or any read isolation — those are Grafana config, outside Terraform, sketched
-below only. So on its own this module gives **hard write isolation and NO read isolation**; read
-isolation only exists once you build the Grafana org-per-team setup separately.
+**Scope — AWS-only.** Per team in `var.teams` this creates: an AMP workspace, an `amp-write` role
+(collector), a `grafana-read` role (that team's Grafana), and the Pod Identity bindings — all scoped
+to that one workspace. It does **not** deploy Grafana/collectors or create dashboards/users; it only
+provisions the AWS substrate + IAM they bind to.
 
-## What it creates (per team in `var.teams`)
-- `aws_prometheus_workspace` `<cluster>-<team>` — the team's tenant.
-- `aws_iam_role` `<cluster>-<team>-amp-write` + Pod Identity on the team's collector SA →
-  `aps:RemoteWrite` **only to that workspace** = hard write isolation.
-- One shared `aws_iam_role` `<cluster>-grafana-read` (query on **all** team workspaces), bound to
-  the Grafana SA. Read isolation is at the **Grafana org** level (datasource per org), not IAM.
+## What it creates (per team)
+| Resource | Scope |
+|---|---|
+| `aws_prometheus_workspace` `<cluster>-<team>` | the team's tenant |
+| `amp-write` role + Pod Identity (collector SA) | `aps:RemoteWrite` → **only** this workspace |
+| `grafana-read` role + Pod Identity (team Grafana SA) | `aps:Query*` → **only** this workspace |
+
+## Isolation
+| | Mechanism | Hard? |
+|---|---|---|
+| Write (team → its workspace) | per-team `amp-write` IAM role | ✅ hard |
+| Read (team sees only its metrics) | per-team `grafana-read` IAM role (own Grafana) | ✅ hard |
+
+→ Cost of hard read: **each team runs its own Grafana** (or AMG workspace). Heavier than one shared
+Grafana. If you prefer a single Grafana, see the alternative below (read isolation becomes soft).
 
 ## How to wire (00-infra)
 ```hcl
@@ -24,45 +31,22 @@ module "observability_aws" {
   source       = "../../../../modules/observability-aws-multitenant"
   cluster_name = data.terraform_remote_state.eks.outputs.cluster_name
   teams = {
-    team-a = { namespace = "team-a", collector_sa = "adot-collector" }
-    team-b = { namespace = "team-b", collector_sa = "adot-collector" }
+    team-a = { namespace = "team-a", collector_sa = "adot-collector", grafana_namespace = "team-a", grafana_sa = "grafana" }
+    team-b = { namespace = "team-b", collector_sa = "adot-collector", grafana_namespace = "team-b", grafana_sa = "grafana" }
   }
 }
-output "team_amp_remote_write" { value = module.observability_aws.team_amp_remote_write }
-output "team_amp_endpoints"    { value = module.observability_aws.team_amp_endpoints }
+output "team_amp_remote_write"  { value = module.observability_aws.team_amp_remote_write }
+output "team_amp_endpoints"     { value = module.observability_aws.team_amp_endpoints }
+output "grafana_read_role_arns" { value = module.observability_aws.grafana_read_role_arns }
 ```
 
-## Per-team collector (02-platform)
-Each team runs its own collector (ADOT / kube-prometheus-stack) in its namespace, remote-writing to
-**its** workspace (`team_amp_remote_write[<team>]`). Pod Identity gives it only that workspace →
-team-a cannot write team-b's metrics.
+## 02-platform (what you deploy per team)
+- **Collector** (ADOT / kube-prometheus-stack) in the team ns, remote-write to `team_amp_remote_write[<team>]`.
+- **Grafana** in the team ns (SA = the `grafana_sa` you passed), one AMP datasource → `team_amp_endpoints[<team>]`
+  (sigv4, via the team's `grafana-read` Pod Identity). The team only sees its own workspace.
 
-## Grafana: org per team (sketch)
-One shared Grafana, one **org per team**, each org a datasource → that team's AMP endpoint (sigv4,
-via the `grafana-read` Pod Identity). Users are mapped to their org + role → they only see their
-tenant. Orgs/datasources need provisioning (Grafana API / sidecar) — the kube-prometheus-stack
-`grafana` values can seed datasources with `orgId`:
-
-```yaml
-# grafana values (sketch) — one datasource per team, pinned to that team's org
-additionalDataSources:
-  - name: AMP team-a
-    type: prometheus
-    orgId: 2                       # org for team-a (orgs pre-created via Grafana API/provisioning)
-    url: <team_amp_endpoints["team-a"]>
-    jsonData: { httpMethod: POST, sigV4Auth: true, sigV4AuthType: default, sigV4Region: ap-southeast-1 }
-  - name: AMP team-b
-    type: prometheus
-    orgId: 3
-    url: <team_amp_endpoints["team-b"]>
-    jsonData: { httpMethod: POST, sigV4Auth: true, sigV4AuthType: default, sigV4Region: ap-southeast-1 }
-```
-
-## Isolation summary
-| | Mechanism | Hard? |
-|---|---|---|
-| Write (team → its workspace) | per-team `amp-write` IAM role (Pod Identity) | ✅ hard |
-| Read (team sees only its metrics) | Grafana **org** + per-org datasource | ⚠️ soft (org-level) |
-
-For hard read isolation too: one Grafana/AMG workspace per team, each with a role scoped to a
-single AMP workspace (heavier — N Grafanas).
+## Alternative — one shared Grafana + org per team (soft read)
+If you don't want N Grafanas: run one Grafana, give it a single role that can query all workspaces,
+and split teams by **Grafana org** (datasource per org). Read isolation is then at the org layer
+(Grafana config, not IAM) — softer, but one Grafana to run. That variant replaces the per-team
+`grafana-read` here with a single all-workspace role; see `docs/OBSERVABILITY.md` §7.

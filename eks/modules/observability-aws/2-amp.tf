@@ -15,7 +15,6 @@ locals {
       Action    = ["sts:AssumeRole", "sts:TagSession"]
     }]
   })
-  native_pipeline = var.enable_amp && var.enable_aws_native_pipeline
 }
 
 resource "aws_iam_role" "amp_write" {
@@ -48,14 +47,14 @@ resource "aws_eks_pod_identity_association" "amp_write" {
 
 # ADOT also ships traces to X-Ray (awsxray exporter).
 resource "aws_iam_role_policy_attachment" "amp_write_xray" {
-  count      = local.native_pipeline ? 1 : 0
+  count      = var.enable_amp ? 1 : 0
   role       = aws_iam_role.amp_write[0].name
   policy_arn = "arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess"
 }
 
 # kube-prometheus-stack Prometheus remote-writes infra metrics with the same role.
 resource "aws_eks_pod_identity_association" "prometheus" {
-  count           = local.native_pipeline ? 1 : 0
+  count           = var.enable_amp ? 1 : 0
   cluster_name    = var.cluster_name
   namespace       = var.prometheus_namespace
   service_account = var.prometheus_service_account

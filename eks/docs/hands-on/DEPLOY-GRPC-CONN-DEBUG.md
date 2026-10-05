@@ -44,15 +44,18 @@ the gate. (Image Updater = "what's ready"; manual sync = "when to ship".)
 ## Deploy the CD config 🖐️
 dev also exposes via Gateway API (`-02`), so deploy the shared gateway-infra (GatewayClass +
 LoadBalancerConfiguration in ns `dev`) first: ⚙️ `aws-iac/eks` `./deploy.sh 03-application`.
-(stg/prod are ingress-only — no gateway-infra.) Then:
+(stg/prod are ingress-only — no gateway-infra.) Then apply the **root app-of-apps** once — Argo CD
+syncs every appset + ImageUpdater CR under `apps/` (grpc + hello) and re-creates them on re-setup:
 ```bash
 # from argo-simple
-kubectl apply -f apps/grpc-conn-debug/appset-server.yaml
-kubectl apply -f apps/grpc-conn-debug/appset-client.yaml
-kubectl apply -f apps/grpc-conn-debug/dev/image-updater.yaml
-kubectl apply -f apps/grpc-conn-debug/stg/image-updater.yaml
-kubectl apply -f apps/grpc-conn-debug/prod/image-updater.yaml
+kubectl apply -f bootstrap/root-app.yaml
+kubectl -n argocd get applicationset,imageupdater,applications
 ```
+The ImageUpdater CRs are **siblings** of the generated Applications (both in ns argocd), managed by
+the root — not rendered by the app chart. Edits/deletes in git reconcile automatically (selfHeal).
+
+> This pull/Image-Updater wiring has known rough edges; cleaner alternatives (CI-push, Kargo) and the
+> open decision are in [`docs/IMAGE-PROMOTION.md`](../IMAGE-PROMOTION.md).
 
 ## Day-to-day
 - **dev**: push `main` → build `d-<sha>` → Image Updater bumps `dev/*-values.yaml` → auto-deploy ns dev.

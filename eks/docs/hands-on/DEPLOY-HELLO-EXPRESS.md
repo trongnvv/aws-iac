@@ -26,13 +26,10 @@ is skipped for now; SAST (Sonar) is skipped until `SONAR_HOST_URL`/`SONAR_TOKEN`
    Identity agent, GitLab token secret `repo-argo-simple` (apply `argocd-repo-secret.yaml`), connection authorized.
 2. ⚙️ `foundation/apply.sh` (applies `05` too — CodeBuild + webhook).
 3. 🖐️ push `hello-express` (buildspec.yml) and `argo-simple`.
-4. 🖐️ apply the CD config:
-   ```bash
-   kubectl apply -f apps/hello-express/appset.yaml
-   kubectl apply -f apps/hello-express/dev/image-updater.yaml
-   kubectl apply -f apps/hello-express/stg/image-updater.yaml
-   kubectl apply -f apps/hello-express/prod/image-updater.yaml
-   ```
+4. 🖐️ CD config — **nothing per-app**. The root app-of-apps (`bootstrap/root-app.yaml`, applied
+   once in the grpc runbook) includes `apps/hello-express/` too (glob `{**/appset*.yaml,**/image-updater.yaml}`),
+   so Argo CD syncs this app's appset + ImageUpdater CRs automatically. If the root isn't applied yet:
+   `kubectl apply -f bootstrap/root-app.yaml`.
 
 ## Day-to-day (same as grpc)
 - dev: push `main` → test+build → `d-<sha>` → auto-deploy ns dev.

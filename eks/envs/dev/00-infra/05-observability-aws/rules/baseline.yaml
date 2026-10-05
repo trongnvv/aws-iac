@@ -1,0 +1,20 @@
+# AMP alert rules — authored here as plain YAML (bare `groups:` schema, same as a PrometheusRule
+# body). Add a new alert = edit this file or drop another rules/*.yaml; the module ships each file
+# to AMP as its own rule-group namespace. Add a `team` label for per-team routing (A7).
+groups:
+  - name: basic
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} target is down"
+      - alert: HighPodRestarts
+        expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.namespace }}/{{ $labels.pod }} is restarting"

@@ -6,7 +6,10 @@ variable "env" {
   default = "dev"
 }
 
-# AMP bills per sample ingested + stored → default off; enable per-env.
+# The whole AWS-native pipeline (test-plans/03 Part A): AMP workspace + ADOT (metrics + X-Ray) +
+# kube-prometheus-stack Prometheus remote-write + Fluent Bit → CloudWatch Logs + Grafana reading
+# AMP/CloudWatch/X-Ray. One switch (the layer2 07-observability-aws helmfile deploys all of it, so
+# splitting the IAM would leave pods without Pod Identity). AMP bills per sample → default off.
 variable "enable_amp" {
   default = false
 }
@@ -24,14 +27,6 @@ variable "collector_service_account" {
 # Wired from the eks module output by the env root.
 variable "cluster_name" {
   type = string
-}
-
-# Wires the rest of the AWS-native pipeline around AMP: kube-prometheus-stack
-# Prometheus remote-write, ADOT → X-Ray, Fluent Bit → CloudWatch Logs, and Grafana
-# reading AMP/CloudWatch/X-Ray. Requires enable_amp. Pairs with the layer2
-# 07-observability-aws release (ADOT + Fluent Bit).
-variable "enable_aws_native_pipeline" {
-  default = false
 }
 
 # Service accounts below must match the Helm releases (kube-prometheus-stack in
@@ -54,4 +49,34 @@ variable "fluent_bit_namespace" {
 
 variable "fluent_bit_service_account" {
   default = "aws-for-fluent-bit"
+}
+
+# ── Alerting (test-plans/03 §A7) ─────────────────────────────────────────────
+# AMP rule groups + managed Alert Manager → SNS → optional AWS Chatbot. Replaces Grafana OnCall.
+# Requires enable_amp. Essentially free (SNS cents), so safe to turn on per-env.
+variable "enable_alerting" {
+  default = false
+}
+
+# Per-team routing. Each key = a `team` label value → its own SNS topic; Alert Manager routes alerts
+# carrying `team=<key>` there. slack_channel_id (optional) wires Chatbot to that topic. Alerts with no
+# matching team go to the always-created `default` topic.
+variable "alert_teams" {
+  type = map(object({
+    slack_channel_id = optional(string)
+  }))
+  default = {}
+}
+
+# Slack workspace (team) id authorized once in the AWS Chatbot console (Chatbot can't authorize a
+# workspace via API). Empty = SNS-only, no Chatbot. See test-plans/03 §A7 for the manual step.
+variable "alert_slack_workspace_id" {
+  default = ""
+}
+
+# AMP rule-group namespaces: name → YAML content (bare `groups:` schema, like a PrometheusRule body).
+# The env reads its rules/*.yaml with file() and passes them here, so rules stay authored as plain YAML.
+variable "alert_rule_groups" {
+  type    = map(string)
+  default = {}
 }

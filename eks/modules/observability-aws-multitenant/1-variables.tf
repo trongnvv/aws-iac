@@ -10,27 +10,21 @@ variable "cluster_name" {
   type = string
 }
 
-# One entry per team. Each team gets its own AMP workspace + amp-write role, bound by Pod Identity
-# to that team's metrics collector (ADOT or kube-prometheus-stack Prometheus) in its namespace.
+# One entry per team. Each team gets its own AMP workspace + write role (its collector) + read role
+# (its own Grafana) — both scoped to that team's workspace → hard write AND read isolation in IAM.
 variable "teams" {
   type = map(object({
-    namespace    = string # the team's collector namespace
-    collector_sa = string # the team's collector ServiceAccount (remote-writes to the team workspace)
+    namespace         = string # the team's collector namespace (write)
+    collector_sa      = string # the team's collector ServiceAccount (remote-writes to the team workspace)
+    grafana_namespace = string # the team's Grafana namespace (read)
+    grafana_sa        = string # the team's Grafana ServiceAccount (queries ONLY the team workspace)
   }))
   default = {}
   # example:
   # teams = {
-  #   team-a = { namespace = "team-a", collector_sa = "adot-collector" }
-  #   team-b = { namespace = "team-b", collector_sa = "adot-collector" }
+  #   team-a = { namespace = "team-a", collector_sa = "adot-collector",
+  #              grafana_namespace = "team-a", grafana_sa = "grafana" }
+  #   team-b = { namespace = "team-b", collector_sa = "adot-collector",
+  #              grafana_namespace = "team-b", grafana_sa = "grafana" }
   # }
-}
-
-# The shared Grafana's ServiceAccount — gets read (query) on every team workspace; per-team
-# visibility is enforced at the Grafana ORG level (datasource per org), not by IAM.
-variable "grafana_namespace" {
-  default = "monitoring"
-}
-
-variable "grafana_service_account" {
-  default = "kube-prometheus-stack-grafana"
 }

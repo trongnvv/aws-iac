@@ -12,3 +12,13 @@ releases:
     wait: true
     values:
       - values.yaml
+
+  # ECR pull secret (dockerconfigjson) for Image Updater, minted + refreshed by External Secrets.
+  # Needs the ESO CRDs (01-addons/05-external-secrets) — applied in an earlier layer.
+  - name: image-updater-ecr-secret
+    namespace: argocd
+    chart: ../../../../charts/app
+    needs:
+      - argocd/argocd-image-updater
+    values:
+      - ecr-imageupdater-externalsecret.yaml

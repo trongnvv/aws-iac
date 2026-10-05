@@ -44,7 +44,7 @@ enable flag. `dev` ships the small set; `prod` ships everything.
 | 04 | kubecost | cost visibility per namespace/workload | kubecost IAM | — | ✅ |
 | 05 | service-mesh | Kuma — mTLS, traffic management (east-west) | — | — | ✅ |
 | 06 | falco | runtime security (syscall detection) | — | — | ✅ |
-| 07 | observability-aws | ADOT (OTLP → AMP + X-Ray) · Fluent Bit (→ CloudWatch Logs) | 05-observability-aws (`enable_aws_native_pipeline`) | ✅ | — |
+| 07 | observability-aws | ADOT (OTLP → AMP + X-Ray) · Fluent Bit (→ CloudWatch Logs) | 05-observability-aws (`enable_amp`) | ✅ | — |
 
 ## Add a new system
 `cp -r envs/dev envs/staging`, edit each `00-infra/*/main.tf` (env, cluster_name, CIDR,

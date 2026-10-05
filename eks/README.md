@@ -17,6 +17,7 @@ OpenTofu for AWS resources, Helmfile for Kubernetes add-ons.
 | **Networking** (north-south, ALB vs NLB, egress, endpoints) | `docs/NETWORKING.md` |
 | **Something's broken** (symptom → fix) | `docs/TROUBLESHOOTING.md` |
 | Post-cluster test ideas (ingress/gRPC, observability, CI/CD) | `docs/TEST-PLAN.md` |
+| How images reach dev→stg→prod (pull vs push vs Kargo, open decision) | `docs/IMAGE-PROMOTION.md` |
 | Understand the structure | Structure section below · `modules/README.md` · `envs/README.md` (per-env layer catalog) |
 | Chart ↔ K8s version support | `docs/VERSION-COMPATIBILITY.md` |
 | Set env vars for a manual run | `env.sh.example` |

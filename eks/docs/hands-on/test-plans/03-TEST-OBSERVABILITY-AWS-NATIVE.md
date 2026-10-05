@@ -139,7 +139,7 @@ Part A is **in code**, deployed by `envs/dev/deploy.sh` like any other layer:
 
 | Piece | Where |
 |---|---|
-| AMP workspace + IAM roles + Pod Identity (ADOT, Prometheus, Fluent Bit, Grafana) | `modules/observability-aws` · `envs/dev/00-infra/05-observability-aws` (`enable_amp` + `enable_aws_native_pipeline`) |
+| AMP workspace + IAM roles + Pod Identity (ADOT, Prometheus, Fluent Bit, Grafana) | `modules/observability-aws` · `envs/dev/00-infra/05-observability-aws` (`enable_amp`) |
 | Infra metrics → AMP (`remoteWrite`, allowlist) · Grafana SigV4 + AMP/CloudWatch/X-Ray datasources | `envs/dev/02-platform/01-observability/values.yaml` |
 | ADOT collector · Fluent Bit | `envs/dev/02-platform/07-observability-aws/` |
 
@@ -282,7 +282,54 @@ Generate traffic (same loop as B4), then:
 Compare with B4 later on the same app: what Application Signals gives on top (RED per
 operation, SLOs, trace ↔ log links) vs what you'd have to build in Grafana yourself here.
 
-## A7. Cleanup Part A
+## A7. Alerting — replaces Grafana OnCall (routing to multi-team channels)
+**Wired in IaC** — `modules/observability-aws/5-alerting.tf`, enabled in dev
+(`00-infra/05-observability-aws`, `enable_alerting = true`). The Grafana-OnCall model (rules →
+route by label → team channels, with on-call schedules/escalation) maps to AWS-native like this:
+
+| OnCall did | AWS-native |
+|---|---|
+| Alert rules | **AMP rule groups** (PrometheusRule syntax) — AMP managed, evaluates them |
+| Route to the right team's channel | **AMP AlertManager** `route` tree — match label `team`/`severity` → per-team receiver |
+| Deliver to Slack/Teams | receiver → **SNS** (one topic per team) → **AWS Chatbot** (Amazon Q in chat) |
+| On-call schedule + escalation (paging) | **AWS Systems Manager Incident Manager** (AWS-native) *or* PagerDuty/Opsgenie (SaaS, closest to OnCall UX) |
+
+Flow:
+```
+AMP rules → AMP AlertManager (route by team/severity label)
+  → SNS (1 topic/team) → AWS Chatbot → team Slack/Teams       (notify)
+                       → Incident Manager / PagerDuty          (on-call schedule + escalate + page)
+```
+
+**Multi-team routing** = the AlertManager `route` tree: top route branches on the `team` label,
+one child route per team → receiver = that team's SNS topic/webhook. Same label-routing idea OnCall
+used. With the multi-tenant module (`modules/observability-aws-multitenant`, workspace-per-team),
+**each team's AMP workspace carries its own rules + AlertManager config** → routes straight to that
+team's channel; no shared routing to untangle.
+
+What the IaC creates (`5-alerting.tf`, gated by `enable_alerting`):
+- **AMP rule groups** — authored as plain YAML in `00-infra/05-observability-aws/rules/*.yaml` (bare
+  `groups:` schema, like a PrometheusRule body), shipped via `file()`. Add an alert = drop a YAML file.
+- **AMP Alert Manager** (`aws_prometheus_alert_manager_definition`) — route tree: `team` label →
+  `sns-<team>`, fallthrough → `sns-default`.
+- **SNS topic per team + `default`** (+ topic policy letting `aps.amazonaws.com` publish).
+- **AWS Chatbot** (Slack) per team — only when `alert_slack_workspace_id` + `alert_teams[*].slack_channel_id` are set.
+
+Manual / verify:
+- 🖐️ **Chatbot Slack**: authorize the Slack workspace once in the AWS Chatbot console → pass its
+  workspace id as `alert_slack_workspace_id`, each channel id in `alert_teams`. Chatbot's API is
+  **us-east-1** — add a us-east-1 provider alias in the env root if apply complains.
+- ⚠️ **team routing** needs a `team` label on the series — add it via remote-write relabeling
+  (namespace → team); without it, alerts go to `sns-default`.
+- On-call (not in IaC): subscribe **Incident Manager** or **PagerDuty** to the same SNS topic.
+- Verify: `aws sns list-topics | grep alerts`; fire a test alert and watch SNS/Chatbot.
+
+Alternative (Grafana-centric, closer to the old setup): skip AMP AlertManager and use the Grafana
+you deploy — **Grafana unified alerting** (rules) + **notification policies** (route by label →
+per-team contact point: Slack/SNS/PagerDuty). One place for dashboards + alerts; but it's Grafana
+config, not the AMP-managed path.
+
+## A8. Cleanup Part A
 Part A is part of the dev layers, so the normal path is **`envs/dev/teardown.sh`** (keeps
 the AMP workspace, drops the IAM). To stop paying for ingestion while keeping the cluster:
 ```bash
@@ -305,7 +352,21 @@ Part B reuses the Grafana read role and datasources — keep `05-observability-a
 
 # Part B — CloudWatch flavor (Container Insights + Application Signals)
 
-Run after A7 — the add-on ships its own Fluent Bit; running both doubles log cost.
+**Path A (Prometheus/AMP) is the chosen rollout.** Part B (CloudWatch) is kept **collapsed as a
+reference** — the A-vs-B trade-off is in the table below. Expand only if revisiting the CloudWatch route.
+
+| | Part A (Prometheus) — chosen | Part B (CloudWatch) |
+|---|---|---|
+| Setup effort | IAM ×4, 2 charts, values edits | 1 IAM role + 1 add-on + 1 annotation |
+| Query language | PromQL (portable) | CloudWatch metrics math / Logs Insights |
+| App instrumentation | you add OTel SDK (or telemetrygen) | auto-injected (Java/Python/.NET/Node.js) |
+| Trace ↔ log | DIY | built in (App Signals) |
+| Lock-in | low | high |
+
+> Run after A8 (cleanup) — the add-on ships its own Fluent Bit; running both doubles log cost.
+
+<details>
+<summary><b>Part B — CloudWatch flavor: full steps (reference, click to expand)</b></summary>
 
 ## B1. IAM for the CloudWatch agent
 Add to `modules/observability-aws` (new var `enable_container_insights`, default `false`):
@@ -384,16 +445,7 @@ volume, operations, dependencies; open a trace → **related logs** (correlated 
 Create an SLO: *latency p99 < 300 ms, 99% over 1 day* — the AWS-native version of the
 SLO/error-budget idea.
 
-## B5. Compare with Part A
-| | Part A (Prometheus) | Part B (CloudWatch) |
-|---|---|---|
-| Setup effort | IAM ×4, 2 charts, values edits | 1 IAM role + 1 add-on + 1 annotation |
-| Query language | PromQL (portable) | CloudWatch metrics math / Logs Insights |
-| App instrumentation | you add OTel SDK (or telemetrygen) | auto-injected (Java/Python/.NET/Node.js) |
-| Trace ↔ log | DIY | built in (App Signals) |
-| Lock-in | low | high |
-
-## B6. Cleanup Part B
+## B5. Cleanup Part B
 ```bash
 kubectl annotate ns dev instrumentation.opentelemetry.io/inject-nodejs-
 kubectl -n dev rollout restart deploy
@@ -405,3 +457,5 @@ for g in application dataplane host performance; do
 ```
 Control-plane logs (§1.1): set `enable_control_plane_logging = false` back, `tofu apply` in
 `01-eks`, and delete `/aws/eks/eks-dev/cluster` if not needed.
+
+</details>

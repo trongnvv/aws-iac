@@ -40,7 +40,7 @@ CloudWatch (roll-your-own) and managed open source (AMP, AMG).
 Current state:
 - `envs/<env>/02-platform/01-observability` = **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager) — metrics + UI, self-hosted, **ephemeral** (`emptyDir`).
 - `envs/<env>/00-infra/05-observability-aws` = **AMP workspace + IAM** (Pod Identity roles for every collector + Grafana).
-- **dev** wires the AWS-native pipeline (`enable_aws_native_pipeline`): kps Prometheus `remoteWrite` (allowlisted metrics) → AMP · `02-platform/07-observability-aws` = ADOT (OTLP → AMP + X-Ray) + Fluent Bit (→ CloudWatch Logs) · kps Grafana reads AMP/CloudWatch/X-Ray. The AMP workspace survives `teardown.sh`. Walkthrough: `hands-on/test-plans/03-TEST-OBSERVABILITY-AWS-NATIVE.md`.
+- **dev** wires the AWS-native pipeline (one switch, `enable_amp`): kps Prometheus `remoteWrite` → AMP · `02-platform/07-observability-aws` = ADOT (OTLP → AMP + X-Ray) + Fluent Bit (→ CloudWatch Logs) · kps Grafana reads AMP/CloudWatch/X-Ray · alerting (`enable_alerting`) = AMP rules + Alert Manager → SNS. The AMP workspace survives `teardown.sh`. Walkthrough: `hands-on/test-plans/03-TEST-OBSERVABILITY-AWS-NATIVE.md`.
 - Gaps: no self-hosted logs/traces (Loki/Tempo — test 05), AMG unused (Grafana in kps instead), Prometheus not durable (see `REVIEW.md` #2).
 
 Recommended per size (Grafana-LGTM-on-AWS, data in-account):
