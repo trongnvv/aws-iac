@@ -31,8 +31,7 @@ grafana:
   additionalDataSources:
     - name: AMP
       type: prometheus
-      # AMP workspace survives teardown → stable ID. Set once from:
-      #   cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_endpoint
+      # ws-REPLACE-ME is auto-stamped by deploy.sh (02-platform) from the 05-observability-aws output.
       url: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/
       jsonData:
         httpMethod: POST
@@ -52,18 +51,13 @@ grafana:
 
 prometheus:
   prometheusSpec:
-    # Forward a small, fixed set of infra metrics to AMP (Pod Identity role
-    # `eks-dev-amp-write`). AMP bills per sample: the full kube-prometheus-stack set is
-    # ~50–100k series ≈ $13–26/day; this allowlist is a few thousand series.
+    # Forward the full metric set to AMP (Pod Identity role `eks-dev-amp-write`). AMP bills per
+    # sample — the full kube-prometheus-stack set is large; add a writeRelabelConfigs allowlist
+    # here if the AMP bill matters. ws-REPLACE-ME is auto-stamped by deploy.sh.
     remoteWrite:
       - url: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/api/v1/remote_write
         sigv4:
           region: ap-southeast-1
-        writeRelabelConfigs:
-          - sourceLabels: [__name__]
-            action: keep
-            regex: >-
-              up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|kube_pod_status_phase|kube_pod_container_status_restarts_total|kube_deployment_status_replicas_available|node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes
   ingress:
     enabled: true
     ingressClassName: alb

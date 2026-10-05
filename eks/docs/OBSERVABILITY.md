@@ -59,3 +59,32 @@ without touching apps.
 - **SaaS** (Datadog, Grafana Cloud): verify **data-residency** rules and **PCI-DSS**
   scope before sending telemetry out of the account/country.
 - **Mask/redact** sensitive fields **at the collector**, regardless of backend.
+
+## 7. Multi-team (multi-tenant) — AMP workspace per team
+
+AMP is **not** Mimir: there is no `X-Scope-OrgID` logical tenancy. AMP's isolation unit is the
+**workspace**, so "one tenant per team" becomes **one AMP workspace per team**. AMP has no
+per-workspace fee (billed per sample ingested/stored/queried), so N workspaces cost ≈ 1.
+
+**Chosen approach (A) — workspace per team + one Grafana, org per team:**
+
+| Old (Mimir) | This approach (AMP) |
+|---|---|
+| Mimir tenant (`X-Scope-OrgID`) per team | AMP **workspace per team** |
+| write isolation via tenant header | **IAM** `aps:RemoteWrite` scoped to the team's workspace — each team's collector gets a Pod Identity role bound only to its workspace (hard isolation) |
+| Grafana org per team + tenant datasource | Grafana **org per team**, each org a datasource → that team's workspace; map users → org + RBAC |
+
+- **Write isolation = hard** (IAM per-team collector role).
+- **Read isolation = Grafana org** (soft) when one shared Grafana — the same boundary the Mimir
+  setup used. For hard read isolation, give each team its own Grafana/AMG workspace with an
+  IAM role scoped to its AMP workspace (heavier).
+
+**Alternatives considered:**
+- **Keep Mimir self-hosted on EKS + S3** — if the `X-Scope-OrgID` tenant model (one backend, many
+  tenants) matters, run Mimir yourself (S3 backend). Exact old model; you operate Mimir.
+- **Single AMP + Grafana folders/labels** — cheapest to run but **no hard isolation** (AMP has no
+  per-label access control; teams can query each other's metrics). Only for mutually-trusting teams.
+
+→ Recommended: **A** — maps the old Mimir-tenant + Grafana-org + RBAC model onto AMP by swapping
+*tenant → workspace*, and drops the Mimir ops burden. Choose Mimir-on-EKS only if header tenancy
+is a hard requirement.

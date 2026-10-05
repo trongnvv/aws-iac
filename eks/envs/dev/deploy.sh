@@ -47,6 +47,17 @@ fi
 
 if run 02-platform; then
   echo "== 02-platform =="
+  # Stamp the AMP workspace ID into the observability values (plain YAML, no tofu-output wiring).
+  # Idempotent: no-op once stamped. AMP survives teardown so the ID stays stable.
+  if [ -d 00-infra/05-observability-aws ]; then
+    WS=$(cd 00-infra/05-observability-aws && tofu output -raw amp_endpoint 2>/dev/null | sed -nE 's#.*/workspaces/(ws-[0-9a-f-]+)/?#\1#p') || true
+    if [ -n "${WS:-}" ]; then
+      for f in 02-platform/01-observability/values.yaml 02-platform/07-observability-aws/adot-values.yaml; do
+        perl -pi -e "s/ws-REPLACE-ME/$WS/g" "$f"
+      done
+      echo "stamped AMP workspace $WS"
+    fi
+  fi
   for d in 02-platform/*/; do ( cd "$d" && helmfile apply --skip-diff-on-install ); done
 fi
 

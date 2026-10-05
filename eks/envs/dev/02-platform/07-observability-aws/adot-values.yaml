@@ -19,8 +19,7 @@ config:
       service: aps
   exporters:
     prometheusremotewrite:
-      # AMP workspace survives teardown → stable ID. Set once from:
-      #   cd envs/dev/00-infra/05-observability-aws && tofu output -raw amp_remote_write_url
+      # ws-REPLACE-ME is auto-stamped by deploy.sh (02-platform) from the 05-observability-aws output.
       endpoint: https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-REPLACE-ME/api/v1/remote_write
       auth:
         authenticator: sigv4auth

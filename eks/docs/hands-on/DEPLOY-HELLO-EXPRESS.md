@@ -23,7 +23,7 @@ is skipped for now; SAST (Sonar) is skipped until `SONAR_HOST_URL`/`SONAR_TOKEN`
 
 ## Setup
 1. Platform already up (per the grpc runbook): Argo CD + Image Updater + ESO OCI repo secret, Pod
-   Identity agent, GitLab token secret `repo-argo-simple`, connection authorized.
+   Identity agent, GitLab token secret `repo-argo-simple` (apply `argocd-repo-secret.yaml`), connection authorized.
 2. ⚙️ `foundation/apply.sh` (applies `05` too — CodeBuild + webhook).
 3. 🖐️ push `hello-express` (buildspec.yml) and `argo-simple`.
 4. 🖐️ apply the CD config:

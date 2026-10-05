@@ -37,7 +37,8 @@ the gate. (Image Updater = "what's ready"; manual sync = "when to ship".)
 2. 🖐️ enable `eks-pod-identity-agent` on `eks-dev`.
 3. ⚙️ `eks` `./deploy.sh 02-platform` — Argo CD + Image Updater (chart 1.3.1, ImageUpdater CRD) +
    the ESO-minted `repo-ecr-helm` OCI repo secret.
-4. 🖐️ GitLab token → `repo-argo-simple` secret (argo-simple README §1).
+4. 🖐️ GitLab token → `repo-argo-simple` secret: fill the token in `argocd-repo-secret.yaml` (this
+   dir) and `kubectl apply -f argocd-repo-secret.yaml`. (OCI chart secret `repo-ecr-helm` is ESO-minted.)
 5. 🖐️ push repos: `grpc-conn-debug` (one `buildspec.yml` for build+promote) and `argo-simple`.
 
 ## Deploy the CD config 🖐️
