@@ -38,6 +38,17 @@ resource "aws_codebuild_project" "promote" {
     image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
     compute_type = "BUILD_GENERAL1_SMALL"
     # no privilegedMode: promote only retags (put-image), it does not build images
+
+    environment_variable {
+      name  = "GITLAB_USER" # deploy-token username — buildspec commits the promoted tag (stg/prod)
+      value = "${var.gitlab_token_secret}:username"
+      type  = "SECRETS_MANAGER"
+    }
+    environment_variable {
+      name  = "GITLAB_TOKEN"
+      value = "${var.gitlab_token_secret}:password"
+      type  = "SECRETS_MANAGER"
+    }
   }
 }
 

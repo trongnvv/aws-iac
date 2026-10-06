@@ -38,21 +38,6 @@ resource "aws_iam_role_policy" "eso" {
         Action   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
         Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/helm/*"
       },
-      {
-        # Argo CD Image Updater reads app image tags via an ESO-minted token (pullsecret), so the
-        # same eso identity needs list + read on the app repos. (Replaces the image-updater Pod
-        # Identity role — Image Updater has no native ECR credential source.)
-        Sid    = "EcrReadAppImages"
-        Effect = "Allow"
-        Action = [
-          "ecr:DescribeImages", "ecr:ListImages",
-          "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability",
-        ]
-        Resource = [
-          "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/grpc-conn-debug/*",
-          "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/hello-express",
-        ]
-      },
     ]
   })
 }

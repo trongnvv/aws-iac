@@ -42,6 +42,13 @@ resource "aws_iam_role_policy" "codebuild" {
         Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = local.logs_arn
       },
+      {
+        # GitLab PAT so the buildspec can commit the image tag into the gitops repo (push model).
+        Sid      = "GitLabToken"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = "arn:aws:secretsmanager:${var.region}:${local.account}:secret:${var.gitlab_token_secret}-*"
+      },
       # For SAST later: allow reading the Sonar token secret (uncomment when you add it).
       # { Sid = "SonarToken", Effect = "Allow", Action = "secretsmanager:GetSecretValue",
       #   Resource = "arn:aws:secretsmanager:${var.region}:${local.account}:secret:sonar/*" },
@@ -65,6 +72,17 @@ resource "aws_codebuild_project" "build" {
     image           = "aws/codebuild/standard:7.0" # Ubuntu 22.04 — has Node + Docker
     compute_type    = "BUILD_GENERAL1_SMALL"
     privileged_mode = true # DinD for docker build
+
+    environment_variable {
+      name  = "GITLAB_USER" # deploy-token username — buildspec commits the image tag into the gitops repo
+      value = "${var.gitlab_token_secret}:username"
+      type  = "SECRETS_MANAGER"
+    }
+    environment_variable {
+      name  = "GITLAB_TOKEN"
+      value = "${var.gitlab_token_secret}:password"
+      type  = "SECRETS_MANAGER"
+    }
 
     # SAST (Sonar) — set these later, then the buildspec runs the scan (skipped while unset):
     # environment_variable { name = "SONAR_HOST_URL", value = "https://sonar.example" }

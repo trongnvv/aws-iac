@@ -51,6 +51,13 @@ resource "aws_iam_role_policy" "codebuild" {
         Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = local.logs_arn
       },
+      {
+        # GitLab PAT so the buildspec can commit the image tag into the gitops repo (push model).
+        Sid      = "GitLabToken"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = "arn:aws:secretsmanager:${var.region}:${local.account}:secret:${var.gitlab_token_secret}-*"
+      },
     ]
   })
 }
@@ -67,5 +74,16 @@ resource "aws_codebuild_project" "build" {
     image           = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
     compute_type    = "BUILD_GENERAL1_SMALL"
     privileged_mode = true # DinD — builds Docker images
+
+    environment_variable {
+      name  = "GITLAB_USER" # deploy-token username — buildspec commits the image tag into the gitops repo
+      value = "${var.gitlab_token_secret}:username"
+      type  = "SECRETS_MANAGER"
+    }
+    environment_variable {
+      name  = "GITLAB_TOKEN"
+      value = "${var.gitlab_token_secret}:password"
+      type  = "SECRETS_MANAGER"
+    }
   }
 }

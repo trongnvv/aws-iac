@@ -50,7 +50,7 @@ resource "aws_iam_role_policy" "pipeline" {
 }
 
 # Source (GitLab via the shared connection) -> Build (CodeBuild DinD -> ECR).
-# No Deploy stage: ArgoCD + Image Updater own CD (pull-based).
+# No Deploy stage: CD is GitOps — the build's post_build commits the tag to the gitops repo, ArgoCD syncs.
 resource "aws_codepipeline" "app" {
   name     = "grpc-conn-debug"
   role_arn = aws_iam_role.pipeline.arn

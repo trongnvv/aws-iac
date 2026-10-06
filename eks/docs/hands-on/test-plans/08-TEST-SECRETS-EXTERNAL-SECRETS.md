@@ -102,5 +102,7 @@ Secrets Manager: **~$0.40/secret/month** + API calls — delete test secrets.
 ## Real use in this repo
 - **ArgoCD OCI chart pull** — ESO `ECRAuthorizationToken` generator mints `repo-ecr-helm`
   (`02-platform/00-argocd`), refreshed before the 12h ECR token expiry.
-- **Candidate**: the ArgoCD git token (`repo-argo-simple`) could move from a manual `kubectl` secret
-  to an ESO `ExternalSecret` (token in Secrets Manager) — as-code without committing the token.
+- **ArgoCD git repo secret** — `repo-argo-simple` is minted by ESO from Secrets Manager
+  `prod/gitlab-argo-simple-token` (a GitLab deploy token, JSON username+password),
+  `02-platform/00-argocd/gitlab-repo-externalsecret.yaml`. The same secret is read by CI (CodeBuild)
+  to commit image tags — one credential, no committed token, no hand-applied `kubectl` secret.

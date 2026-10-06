@@ -1,37 +1,40 @@
-# Image promotion (GitOps CD) — current state + open concern
+# Image promotion (GitOps CD) — decided: CI-push
 
 How a built image reaches dev → stg → prod. **Build once, promote the same digest** (retag), CD by
-Argo CD. This doc records the current wiring and a known rough-edge that is **not yet decided**.
+Argo CD. **Decision: push model (B below) — implemented.** Image Updater (pull) was tried first and
+dropped; this doc records why.
 
-## Current wiring
-- **CD** = Argo CD `ApplicationSet` (one Application per env) + **Argo Image Updater** (pull: polls
-  ECR, writes the new tag back into `{env}/values.yaml` in the gitops repo `argo-simple`).
-- **Bootstrap** = a root app-of-apps (`argo-simple/bootstrap/root-app.yaml`) that syncs every
-  `appset*.yaml` + `image-updater.yaml` under `apps/` as siblings in ns `argocd`.
-- **prod gate** = the prod Application has no `automated` block → Image Updater commits the tag,
-  Argo CD shows **OutOfSync**, a human clicks **Sync**.
+## Current wiring (push model)
+- **CI commits the tag** — the app `buildspec.yml` (`foundation/04-app-cicd`, `05-hello-express-cicd`),
+  after build/retag, writes the image tag into `{env}/*-values.yaml` in `argo-simple` and pushes,
+  using a GitLab deploy token from Secrets Manager (`prod/gitlab-argo-simple-token`).
+- **CD** = Argo CD `ApplicationSet` (one Application per env) syncing git. No Image Updater.
+- **Bootstrap** = root app-of-apps (`argo-simple/bootstrap/root-app.yaml`) syncs `**/appset*.yaml`.
+- **prod gate** = the prod Application has no `automated` block → the CI commit shows **OutOfSync**,
+  a human clicks **Sync**.
 
-## The concern — this feels messy. Three roots:
-1. **Image Updater writes back to git + needs a CR per env/app** → `image-updater.yaml` files scatter
-   across `apps/<app>/<env>/`.
-2. **CRs live in the same folders as `values.yaml`** → the root app-of-apps must **glob-cherry-pick**
-   (`{**/appset*.yaml,**/image-updater.yaml}`). Fragile: depends on file names, mixes manifest + values.
-3. **The prod gate is a hack** — "disable auto-sync, click Sync" — not a real promotion model.
+## Why not pull (Image Updater) — the rough edges that killed it
+1. Image Updater writes back to git + needs a CR per env/app → `image-updater.yaml` files scattered.
+2. CRs shared folders with `values.yaml` → the root app-of-apps had to glob-cherry-pick (fragile).
+3. ECR auth for the controller (no native ECR source) → pullsecret/ESO token + opaque "no tags found"
+   failures that swallow the real HTTP error. Hours of registry-auth debugging for no payoff.
+Push avoids all three: CI already knows the exact tag it produced — just commit it.
 
-## Options (cleaner, increasing)
+## Options considered
 | | What | Fixes | Cost |
 |---|---|---|---|
-| **A. Restructure by type** | top-level `appsets/` + `image-updaters/` folders; root-app syncs them flat (no glob) | #2 | low; still pull + manual gate |
-| **B. Push model** *(leaning)* | drop Image Updater; **CI commits the tag** into `{env}/values.yaml` after build/promote; Argo CD just syncs | #1 + #2; git history = deploy history, deterministic | CI needs gitops write token; CI↔gitops coupling. Gate still manual-sync |
-| **C. Kargo** | purpose-built multi-stage promotion: `Warehouse` (discover image) → `Freight` → `Stage` with promotion policy + approval **gate** | #1 + #2 + #3 (a real gate) | extra component to run/learn |
+| A. Restructure by type | keep Image Updater; split `appsets/` + `image-updaters/` folders | glob only | still pull + its auth pain |
+| **B. Push model (CHOSEN)** | drop Image Updater; CI commits the tag; Argo CD syncs | all of the above; git history = deploy history, deterministic | CI needs a gitops write token (deploy token in Secrets Manager); CI↔gitops coupling |
+| C. Kargo | purpose-built multi-stage promotion (`Warehouse`→`Freight`→`Stage` + approval gate) | all + a real gate | extra component to run/learn |
 
 ## Decision
-- **Not decided.** Leaning **B** for now (fewest moving parts, fits build-once-promote; good
-  "push vs pull in GitOps, and why" talking point).
-- **C (Kargo)** is the purpose-built answer for multi-env promotion with gates — keep it in mind.
-- **A** is cosmetic only (removes the glob), doesn't address the root.
+- **B (CI-push) — implemented.** Fewest moving parts, fits build-once-promote, nothing to debug at
+  the registry-auth layer. Good "push vs pull in GitOps, and why" interview talking point.
+- **C (Kargo)** stays the purpose-built answer if multi-env promotion with first-class gates is ever
+  needed — keep it in mind.
 
-## Gotcha already hit
-Regex in `allowTags` inside **double-quoted** YAML needs `\\.` (a single `\.` is an invalid YAML
-escape → Argo CD "unknown escape character"). Prefer **single quotes** `'regexp:^[0-9]+\.[0-9]+\.[0-9]+$'`
-— single-quoted YAML does no escape processing, so one backslash is correct.
+## Credential (one deploy token, two readers)
+Secrets Manager `prod/gitlab-argo-simple-token` = GitLab deploy token JSON `{username,password}`
+(scopes `read_repository` + `write_repository`):
+- **ArgoCD** reads it via ESO → `repo-argo-simple` git repo secret (`02-platform/00-argocd`).
+- **CI (CodeBuild)** reads it as `GITLAB_USER`/`GITLAB_TOKEN` env to clone+commit+push.
