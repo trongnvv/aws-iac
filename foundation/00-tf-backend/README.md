@@ -9,14 +9,12 @@ Apply first, then point each layer's `backend "s3"` block at the outputs and run
 
 No enable toggle — foundational and ~pennies/mo.
 
-## If `eks-iac-tfstate` is already in this state (one-time)
-The buckets now use `for_each` (`aws_s3_bucket.this["<name>"]`). If an earlier apply created the eks
-bucket as the old single `aws_s3_bucket.state`, rename it in state **once** so `apply` doesn't try to
-recreate it (then apply only adds `network-iac-tfstate`):
-```bash
-tofu state mv 'aws_s3_bucket.state'                                      'aws_s3_bucket.this["eks-iac-tfstate"]'
-tofu state mv 'aws_s3_bucket_versioning.state'                          'aws_s3_bucket_versioning.this["eks-iac-tfstate"]'
-tofu state mv 'aws_s3_bucket_server_side_encryption_configuration.state' 'aws_s3_bucket_server_side_encryption_configuration.this["eks-iac-tfstate"]'
-tofu state mv 'aws_s3_bucket_public_access_block.state'                 'aws_s3_bucket_public_access_block.this["eks-iac-tfstate"]'
-```
-(Fresh account / never applied → skip this; `tofu apply` just creates both buckets.)
+## Adopting the existing bucket (no recreate)
+`var.adopt_buckets` config-driven-**imports** pre-existing buckets from the real AWS resource (by name)
+on `apply` — so an already-created `eks-iac-tfstate` is adopted, not recreated, while new buckets
+(`network-iac-tfstate`) are just created. No manual `state mv`.
+- **Fresh account** (eks bucket not created yet) → set `adopt_buckets = []` so apply creates both.
+- If OpenTofu still reports the bucket managed under the old `aws_s3_bucket.state` address (from an
+  earlier apply of the single-resource version), `tofu state rm aws_s3_bucket.state` (and its
+  `_versioning`/`_server_side_encryption_configuration`/`_public_access_block`) **once**, then apply —
+  the import adopts the real bucket cleanly.

@@ -30,3 +30,11 @@ resource "aws_s3_bucket_public_access_block" "this" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+# Adopt pre-existing buckets from the real AWS resource (by name) into state on apply — no recreate,
+# no manual `state mv`. Buckets in state_buckets but not adopt_buckets are just created.
+import {
+  for_each = var.adopt_buckets
+  to       = aws_s3_bucket.this[each.value]
+  id       = each.value
+}

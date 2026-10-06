@@ -1,6 +1,6 @@
 # Lab 1 — Transit Gateway hub + segmentation
 
-Test plan: `../docs/TEST-PLAN.md` (lab 1). Concept: workbook `01_Knowledge/Network/Cloud-Connectivity/`.
+Test plan: `../README.md` (lab 1). Concept: workbook `01_Knowledge/Network/Cloud-Connectivity/`.
 
 Wires **3 VPCs** — `shared` (hub), `prod`, `dev` (spokes) — through a TGW and proves segmentation with
 **two TGW route tables**: `shared` reaches both spokes; `prod` and `dev` reach `shared` but **not each

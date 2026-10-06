@@ -30,10 +30,23 @@ diagram + test scenario + troubleshooting + the test-EC2 recipe** (`t4g.micro` +
 ## Lab 1 — TGW hub + segmentation  (`01-tgw-hub/`)
 ```mermaid
 graph LR
-  shared[VPC shared] <--> TGW{{TGW}}
-  prod[VPC prod] <--> TGW
-  dev[VPC dev] <--> TGW
-  prod -. "prod &perp; dev" .- dev
+  subgraph shared["VPC shared 10.0/16"]
+    s["subnet /24 · EC2 (SSM)"]
+  end
+  subgraph prod["VPC prod 10.1/16"]
+    p["subnet /24 · EC2"]
+  end
+  subgraph dev["VPC dev 10.2/16"]
+    d["subnet /24 · EC2"]
+  end
+  subgraph tgw["Transit Gateway"]
+    srt["shared-rt &rarr; learns prod+dev"]
+    krt["spoke-rt &rarr; learns shared only"]
+  end
+  s -->|attach| srt
+  p -->|attach| krt
+  d -->|attach| krt
+  p -. "prod &perp; dev (no route)" .- d
 ```
 - **Core:** 3 VPC + TGW + 2 TGW route tables. `shared` reaches prod + dev; `prod`/`dev` reach shared
   but **not each other**. Prove by SSM + ping (shared→both OK; prod→dev times out).
@@ -44,9 +57,19 @@ graph LR
 ## Lab 1b — Centralized egress (one NAT in shared)
 ```mermaid
 graph LR
-  prod[VPC prod] --> TGW{{TGW}}
-  dev[VPC dev] --> TGW
-  TGW --> NAT["VPC shared<br/>NAT Gateway"] --> net((Internet))
+  subgraph prod["VPC prod"]
+    p[EC2]
+  end
+  subgraph dev["VPC dev"]
+    d[EC2]
+  end
+  subgraph shared["VPC shared"]
+    nat["NAT GW (public subnet)"]
+    igw[IGW]
+  end
+  p -->|"0/0 &rarr; TGW"| tgw{{TGW}}
+  d -->|"0/0 &rarr; TGW"| tgw
+  tgw -->|"shared RT: 0/0 &rarr; NAT"| nat --> igw --> net((Internet))
 ```
 - **Core:** spokes get `0.0.0.0/0 → TGW → shared VPC → NAT Gateway → IGW`. Single NAT serves all VPCs
   (the real enterprise pattern — cost vs a NAT per VPC). Verify: from prod/dev the internet works and
@@ -56,7 +79,14 @@ graph LR
 ## Lab 2 — Site-to-Site VPN → TGW
 ```mermaid
 graph LR
-  cgw["'On-prem' VPC<br/>strongSwan CGW"] <== "IPsec + BGP (2 tunnels)" ==> TGW{{TGW}} --- shared[VPC shared]
+  subgraph onprem["'On-prem' VPC 192.168/16"]
+    cgw["strongSwan EC2<br/>Customer GW · BGP ASN 65000"]
+  end
+  subgraph aws["AWS"]
+    tgw{{"TGW · ASN 64512"}} --- shared["VPC shared 10.0/16"]
+  end
+  cgw ==>|"Tunnel 1 — IPsec + BGP"| tgw
+  cgw ==>|"Tunnel 2 — standby / ECMP"| tgw
 ```
 - **Core:** "on-prem" VPC + strongSwan EC2 as Customer Gateway; IPsec VPN + **BGP** into the TGW;
   ping on-prem ↔ cloud VPC both ways.
@@ -69,13 +99,13 @@ graph LR
 ## Lab 3 — PrivateLink
 ```mermaid
 graph LR
-  subgraph B["VPC B (consumer)"]
-    ep[Interface Endpoint]
+  subgraph B["VPC B (consumer) 10.0/16"]
+    c[client] --> ep["Interface Endpoint<br/>ENI + private DNS name"]
   end
-  subgraph A["VPC A (provider)"]
-    nlb[NLB] --> svc[Service EC2]
+  subgraph A["VPC A (provider) 10.0/16 — CIDR overlaps!"]
+    nlb[NLB] --> svc["service EC2 :app"]
   end
-  ep ==>|PrivateLink| nlb
+  ep ==>|"PrivateLink (endpoint service)"| nlb
 ```
 - **Core:** NLB-backed service in VPC A → interface endpoint in VPC B; **overlapping CIDR still works**
   (traffic is to the endpoint ENI, not routed between CIDRs).
@@ -88,8 +118,16 @@ graph LR
 ## Lab 4 — Route 53 Resolver (hybrid DNS)
 ```mermaid
 graph LR
-  aws["AWS (R53 Resolver)"] -->|"*.corp.local via outbound EP"| onp[On-prem DNS]
-  onp -->|"*.aws.internal via inbound EP"| phz[Route53 PHZ]
+  subgraph aws["AWS VPC"]
+    out["Resolver OUTBOUND EP"]
+    inb["Resolver INBOUND EP"]
+    phz["Route53 PHZ<br/>aws.internal"]
+  end
+  subgraph onprem["On-prem"]
+    dns["corp DNS<br/>corp.local"]
+  end
+  out -->|"query *.corp.local"| dns
+  dns -->|"query *.aws.internal"| inb --> phz
 ```
 - **Core:** inbound + outbound endpoints + resolver rules.
 - **Stretch:**
@@ -100,9 +138,9 @@ graph LR
 ## Lab 5 — VPC Peering vs TGW (trade-offs & limits)
 ```mermaid
 graph LR
-  A[VPC A] ---|Peering| B[VPC B]
-  A ---|Peering| C[VPC C]
-  B -. "B&harr;C blocked (non-transitive)" .- C
+  A["VPC A 10.0/16"] ---|"Peering A-B + routes"| B["VPC B 10.1/16"]
+  A ---|"Peering A-C + routes"| C["VPC C 10.2/16"]
+  B -. "B&harr;C: no peering, no route<br/>(non-transitive)" .- C
 ```
 - **Core:** 2 VPCs peered; show **non-transitive** (A↔B, A↔C, but B can't reach C via A).
 - **Stretch (measured):**
