@@ -1,0 +1,34 @@
+# ── OpenTofu / Terraform ──────────────────────────────────────────────────────
+**.terraform/
+# .terraform.lock.hcl IS committed — pins exact provider versions (do NOT ignore it)
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+*.tfplan
+*.tfplan.*
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ── Local handoff / secrets (never commit real tokens/creds) ──────────────────
+env.sh
+.env
+*.pem
+kubeconfig
+*.kubeconfig
+# deploy.sh writes real tofu outputs here (account-specific IDs) — reference cache
+outputs.cache.json
+
+# ── Helm ──────────────────────────────────────────────────────────────────────
+*.tgz
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+*~
