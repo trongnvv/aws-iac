@@ -28,10 +28,14 @@ graph LR
 ## Structure (layered — each folder is its own state, like the eks env layers)
 | Layer | Builds | Depends on |
 |---|---|---|
-| `1-vpc/` | 3 VPCs + subnet + IGW + route table + SG | — |
-| `2-tgw/` | TGW + attachments + 2 route tables + cross-VPC routes (`10/8 → TGW`) | 1-vpc |
+| `1-vpc/` | 3 VPCs + public subnet + IGW + RT + SG; **shared also gets a dedicated TGW subnet** (egress-ready) | — |
+| `2-tgw/` | TGW + attachments (shared in its TGW subnet) + 2 route tables + cross-VPC routes (`10/8 → TGW`) | 1-vpc |
 | `3-ssm/` | IAM role + instance profile (Session Manager) | — |
 | `4-ec2/` | 3 test hosts (`t4g.micro`, AL2023, SSM, no SSH) | 1-vpc, 3-ssm |
+| `5-egress/` | **optional** (`enable_egress=true`) — central NAT in shared + spoke private subnets → one egress for all | 1-vpc, 2-tgw, 3-ssm |
+
+> **Optional centralized egress** (folded in, off by default): `(cd 5-egress && tofu apply -var enable_egress=true)`.
+> Spokes reach the internet via one NAT in shared through the TGW. Verify/teardown: see `../README.md` (Lab 1 · optional).
 
 ## Run
 Prereq (once per account): create the state bucket via foundation — `(cd ../../foundation/00-tf-backend && tofu init && tofu apply)`

@@ -95,8 +95,30 @@ resource "aws_security_group" "this" {
   tags = { Name = "net-lab-${each.key}" }
 }
 
+# Dedicated subnet for the shared VPC's TGW attachment — makes the lab egress-ready: 5-egress can
+# route 0/0 from the attachment to the central NAT without touching the public subnet (which keeps
+# 0/0 → IGW for SSM). Free (no NAT here); harmless when egress is off.
+resource "aws_subnet" "shared_tgw" {
+  vpc_id            = aws_vpc.this["shared"].id
+  cidr_block        = cidrsubnet(local.vpcs["shared"], 8, 255) # 10.0.255.0/24
+  availability_zone = data.aws_availability_zones.available.names[0]
+  tags              = { Name = "net-lab-shared-tgw" }
+}
+
+resource "aws_route_table" "shared_tgw" {
+  vpc_id = aws_vpc.this["shared"].id
+  tags   = { Name = "net-lab-shared-tgw" }
+}
+
+resource "aws_route_table_association" "shared_tgw" {
+  subnet_id      = aws_subnet.shared_tgw.id
+  route_table_id = aws_route_table.shared_tgw.id
+}
+
 output "vpc_ids" { value = { for k, v in aws_vpc.this : k => v.id } }
 output "subnet_ids" { value = { for k, s in aws_subnet.this : k => s.id } }
 output "sg_ids" { value = { for k, s in aws_security_group.this : k => s.id } }
 output "route_table_ids" { value = { for k, r in aws_route_table.this : k => r.id } }
 output "vpc_cidrs" { value = local.vpcs }
+output "shared_tgw_subnet_id" { value = aws_subnet.shared_tgw.id }
+output "shared_tgw_route_table_id" { value = aws_route_table.shared_tgw.id }

@@ -33,6 +33,8 @@ locals {
   vpc_ids    = data.terraform_remote_state.vpc.outputs.vpc_ids
   subnet_ids = data.terraform_remote_state.vpc.outputs.subnet_ids
   rt_ids     = data.terraform_remote_state.vpc.outputs.route_table_ids
+  # shared's attachment goes in its dedicated tgw subnet (egress-ready); spokes use their public subnet.
+  attach_subnet = merge(local.subnet_ids, { shared = data.terraform_remote_state.vpc.outputs.shared_tgw_subnet_id })
 }
 
 # TGW hub. Default route-table assoc/propagation OFF → two custom RTs segment:
@@ -48,7 +50,7 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
   for_each                                        = local.vpc_ids
   transit_gateway_id                              = aws_ec2_transit_gateway.this.id
   vpc_id                                          = each.value
-  subnet_ids                                      = [local.subnet_ids[each.key]]
+  subnet_ids                                      = [local.attach_subnet[each.key]]
   transit_gateway_default_route_table_association = false
   transit_gateway_default_route_table_propagation = false
   tags                                            = { Name = "net-lab-${each.key}" }
@@ -95,3 +97,5 @@ resource "aws_route" "tgw" {
 }
 
 output "tgw_id" { value = aws_ec2_transit_gateway.this.id }
+output "spoke_route_table_id" { value = aws_ec2_transit_gateway_route_table.spoke.id }
+output "shared_attachment_id" { value = aws_ec2_transit_gateway_vpc_attachment.this["shared"].id }

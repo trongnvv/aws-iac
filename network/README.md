@@ -14,8 +14,7 @@ diagram + test scenario + troubleshooting + the test-EC2 recipe** (`t4g.micro` +
 
 | # | Lab | Solves (traffic) | Core goal | On-prem sim |
 |---|---|---|---|---|
-| **1** | TGW hub + segmentation | **AWS↔AWS** — many VPCs (>10), hub + segment prod/dev | 3 VPCs via TGW; prod↔shared, dev↔shared, **prod⊥dev** | — |
-| **1b** | Centralized egress | **AWS→Internet** — one shared egress for all VPCs | spokes reach internet via **one NAT in shared** (not NAT per VPC) | — |
+| **1** | TGW hub + segmentation (+ optional egress) | **AWS↔AWS** — many VPCs (>10), hub + segment prod/dev · *opt:* **AWS→Internet** central egress | 3 VPCs via TGW; prod↔shared, dev↔shared, **prod⊥dev** · opt. one NAT in shared | — |
 | **2** | Site-to-Site VPN → TGW | **AWS↔on-prem** — hybrid over public Internet, encrypted | on-prem ↔ VPC over IPsec + BGP | VPC + strongSwan |
 | **3** | PrivateLink | **AWS↔3rd-party/vendor** — overlapping CIDR / expose one app only | share one service; overlapping CIDR still works | — |
 | **4** | Route 53 Resolver | **AWS↔on-prem** — hybrid DNS (the glue: `.corp` ↔ `.aws`) | two-way hybrid DNS | reuse lab-2 on-prem |
@@ -54,27 +53,33 @@ graph LR
   - [ ] **Blackhole route** on the spoke route table to *actively drop* prod↔dev, and compare with the
         implicit no-route case (blackhole = explicit + auditable + overrides a propagated route).
 
-## Lab 1b — Centralized egress (one NAT in shared)
+### Lab 1 · optional — centralized egress (layer `5-egress/`, `enable_egress=true`)
+Folded into lab 1 (not a separate lab). Off by default (segmentation stays NAT-free). The shared VPC
+is **egress-ready** — its TGW attachment sits in a dedicated subnet — so turning this on only adds a
+NAT + routes + spoke private subnets, no rework.
 ```mermaid
 graph LR
   subgraph prod["VPC prod"]
-    p[EC2]
+    p["private subnet<br/>EC2 (no IGW)"]
   end
   subgraph dev["VPC dev"]
-    d[EC2]
+    d["private subnet<br/>EC2 (no IGW)"]
   end
   subgraph shared["VPC shared"]
+    tsub["TGW subnet<br/>RT: 0/0 &rarr; NAT"]
     nat["NAT GW (public subnet)"]
     igw[IGW]
   end
-  p -->|"0/0 &rarr; TGW"| tgw{{TGW}}
+  p -->|"0/0 &rarr; TGW"| tgw{{"TGW<br/>spoke-RT: 0/0 &rarr; shared"}}
   d -->|"0/0 &rarr; TGW"| tgw
-  tgw -->|"shared RT: 0/0 &rarr; NAT"| nat --> igw --> net((Internet))
+  tgw --> tsub --> nat --> igw --> net((Internet))
 ```
-- **Core:** spokes get `0.0.0.0/0 → TGW → shared VPC → NAT Gateway → IGW`. Single NAT serves all VPCs
-  (the real enterprise pattern — cost vs a NAT per VPC). Verify: from prod/dev the internet works and
-  the **public egress IP = shared VPC's NAT EIP**.
-- Note: NAT Gateway ≈ $0.045/hour + data — destroy after.
+- **Enable:** `(cd 01-tgw-hub/5-egress && tofu apply -var enable_egress=true)`.
+- **What:** spokes get a **private subnet (no IGW)**; `0/0 → TGW → shared's NAT → IGW`. One NAT serves
+  all VPCs (the enterprise pattern — vs a NAT per VPC).
+- **Verify:** SSM into a spoke **private** host (its agent reaches AWS *through* the central NAT) →
+  `curl -s https://checkip.amazonaws.com` returns the **shared VPC's NAT EIP** (`tofu output nat_public_ip`).
+- Note: NAT Gateway ≈ $0.045/hour + data — `(cd 5-egress && tofu destroy)` after.
 
 ## Lab 2 — Site-to-Site VPN → TGW
 ```mermaid
@@ -153,6 +158,6 @@ graph LR
 ## Direct Connect — concept-only (no physical port to lab)
 Theory + console walkthrough; closest simulation is VPN-over-TGW (lab 2). VIF map → see the Concept doc.
 
-**Why this order:** TGW is the real-world backbone (#1) → centralized egress is the first thing you add
-on top (#1b) → VPN to on-prem is the most common hybrid need (#2) → PrivateLink solves share-a-service +
+**Why this order:** TGW is the real-world backbone (#1, with centralized egress as its optional add-on)
+→ VPN to on-prem is the most common hybrid need (#2) → PrivateLink solves share-a-service +
 overlapping-CIDR (#3) → hybrid DNS comes with on-prem (#4) → Peering last since TGW supersedes most of it (#5).

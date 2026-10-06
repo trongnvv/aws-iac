@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-for d in 4-ec2 3-ssm 2-tgw 1-vpc; do
+for d in 5-egress 4-ec2 3-ssm 2-tgw 1-vpc; do
   echo "=== destroy $d ==="
   (cd "$d" && tofu init -input=false >/dev/null && tofu destroy -auto-approve)
 done
