@@ -71,6 +71,27 @@ release_cluster_eips() {
   done
 }
 
+# Delete LBC-created security groups left behind when we kill LBs directly (controller down → its
+# managed SGs orphan, and an SG is a VPC dependency → blocks the destroy). Scoped twice: SG in this
+# VPC *and* tagged elbv2.k8s.aws/cluster=<cluster>; never the default SG, never non-LBC/tofu SGs.
+# Retries (3 rounds) because deleting one SG can be blocked until another SG referencing it is gone.
+sweep_cluster_sgs() {
+  [ -n "${VPC_ID:-}" ] || return 0
+  for round in 1 2 3; do
+    local remaining=0
+    for sg in $(aws ec2 describe-security-groups --region "$REGION" \
+        --filters Name=vpc-id,Values="$VPC_ID" "Name=tag:elbv2.k8s.aws/cluster,Values=$CLUSTER" \
+        --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null); do
+      echo "  [round $round] deleting orphaned LBC security group $sg"
+      aws ec2 delete-security-group --region "$REGION" --group-id "$sg" 2>/dev/null || true
+      remaining=1
+    done
+    # nothing left to delete → done; else wait for cross-referencing SGs to clear, then retry
+    [ "$remaining" = 0 ] && break
+    sleep 10
+  done
+}
+
 echo "== drain out-of-band AWS resources (while their controllers are still up) =="
 # Karpenter: stop provisioning, then terminate existing nodes (the finalizer waits for the
 # EC2 instance to actually terminate — else it orphans and its ENI blocks the VPC).
@@ -112,6 +133,7 @@ for d in $(ls -d 00-infra/*/ | sort -r); do
   if [ "$d" = "00-infra/00-network/" ]; then
     kill_cluster_lbs
     sweep_enis
+    sweep_cluster_sgs   # after ENIs: an SG only deletes once nothing references it
     ( cd "$d" && tofu destroy -auto-approve 2>/dev/null ) || true
     release_cluster_eips
   fi
@@ -129,7 +151,7 @@ else
 fi
 
 echo "== done: teardown dev =="
-echo "Auto-handled: LBC load balancers killed by tag, orphaned ENIs swept (retry loop), NAT EIPs released."
+echo "Auto-handled: LBC load balancers + security groups killed by tag, orphaned ENIs swept (retry loop), NAT EIPs released."
 echo "If 00-network STILL fails (DependencyViolation), an ENI is likely in-use (slow detach) — wait a"
 echo "minute and just re-run teardown (safe to repeat), or inspect:"
 echo "  VPC=${VPC_ID:-<vpc-id>}; aws ec2 describe-network-interfaces --region $REGION --filters Name=vpc-id,Values=\$VPC \\"
