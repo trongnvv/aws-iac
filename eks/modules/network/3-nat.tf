@@ -5,6 +5,8 @@ locals {
 resource "aws_eip" "nat" {
   count  = local.nat_count
   domain = "vpc"
+  # Tagged so teardown can scope an orphaned-EIP release to THIS cluster's NAT EIPs only.
+  tags = { Name = "${var.cluster_name}-nat" }
 }
 
 # NAT must sit in a public subnet to reach the IGW.

@@ -1,36 +1,3 @@
-terraform {
-  required_version = ">= 1.9.0"
-  backend "s3" {
-    bucket       = "network-iac-tfstate"
-    key          = "01-tgw-hub/1-vpc/terraform.tfstate"
-    region       = "ap-southeast-1"
-    use_lockfile = true
-    encrypt      = true
-  }
-  required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
-  }
-}
-
-provider "aws" {
-  region  = var.region
-  profile = var.profile
-}
-
-variable "region" { default = "ap-southeast-1" }
-variable "profile" { default = "default" }
-
-# shared = hub, prod/dev = spokes. Non-overlapping /16s.
-locals {
-  vpcs = {
-    shared = "10.0.0.0/16"
-    prod   = "10.1.0.0/16"
-    dev    = "10.2.0.0/16"
-  }
-}
-
-data "aws_availability_zones" "available" { state = "available" }
-
 resource "aws_vpc" "this" {
   for_each             = local.vpcs
   cidr_block           = each.value
@@ -73,28 +40,6 @@ resource "aws_route_table_association" "this" {
   route_table_id = aws_route_table.this[each.key].id
 }
 
-# ICMP from any lab VPC → lets us ping across the TGW. SSM needs no inbound rule.
-resource "aws_security_group" "this" {
-  for_each = local.vpcs
-  name     = "net-lab-${each.key}"
-  vpc_id   = aws_vpc.this[each.key].id
-
-  ingress {
-    description = "ICMP from lab VPCs"
-    protocol    = "icmp"
-    from_port   = -1
-    to_port     = -1
-    cidr_blocks = ["10.0.0.0/8"]
-  }
-  egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  tags = { Name = "net-lab-${each.key}" }
-}
-
 # Dedicated subnet for the shared VPC's TGW attachment — makes the lab egress-ready: 5-egress can
 # route 0/0 from the attachment to the central NAT without touching the public subnet (which keeps
 # 0/0 → IGW for SSM). Free (no NAT here); harmless when egress is off.
@@ -114,11 +59,3 @@ resource "aws_route_table_association" "shared_tgw" {
   subnet_id      = aws_subnet.shared_tgw.id
   route_table_id = aws_route_table.shared_tgw.id
 }
-
-output "vpc_ids" { value = { for k, v in aws_vpc.this : k => v.id } }
-output "subnet_ids" { value = { for k, s in aws_subnet.this : k => s.id } }
-output "sg_ids" { value = { for k, s in aws_security_group.this : k => s.id } }
-output "route_table_ids" { value = { for k, r in aws_route_table.this : k => r.id } }
-output "vpc_cidrs" { value = local.vpcs }
-output "shared_tgw_subnet_id" { value = aws_subnet.shared_tgw.id }
-output "shared_tgw_route_table_id" { value = aws_route_table.shared_tgw.id }
