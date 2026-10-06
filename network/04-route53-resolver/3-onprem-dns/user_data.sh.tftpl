@@ -1,0 +1,34 @@
+#!/bin/bash
+# Simulated on-prem DNS server — dnsmasq on Amazon Linux 2023.
+# Role in the lab:
+#   * AUTHORITATIVE for corp.local  → answers host1.corp.local locally (AWS reaches it via the
+#     outbound endpoint + corp.local forwarding rule).
+#   * FORWARDS *.aws.internal        → to the AWS Route 53 Resolver INBOUND endpoint IPs, which resolve
+#     against the private hosted zone (on-prem → AWS direction).
+set -euxo pipefail
+
+dnf install -y dnsmasq bind-utils
+
+cat >/etc/dnsmasq.d/corp-local.conf <<'EOF'
+# Listen on all interfaces (the ENI private IP) so AWS-forwarded queries arrive.
+listen-address=0.0.0.0
+bind-interfaces
+# Do not read /etc/resolv.conf for upstreams — we declare them explicitly below.
+no-resolv
+
+# --- authoritative-ish local records for corp.local (answered by this server) ---
+address=/host1.corp.local/192.168.0.80
+address=/dns.corp.local/${onprem_dns_ip}
+
+# --- forward *.aws.internal to the AWS Resolver INBOUND endpoint IPs ---
+%{ for ip in inbound_ips ~}
+server=/aws.internal/${ip}
+%{ endfor ~}
+
+# --- default upstream for everything else (so the box itself can still resolve the internet) ---
+# 169.254.169.253 = the Amazon-provided VPC resolver (the VPC .2 reader, link-local form).
+server=169.254.169.253
+EOF
+
+systemctl enable --now dnsmasq
+systemctl restart dnsmasq

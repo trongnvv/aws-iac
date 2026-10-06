@@ -19,10 +19,11 @@ diagram + test scenario + troubleshooting + the test-EC2 recipe** (`t4g.micro` +
 | **3** | PrivateLink | **AWS↔3rd-party/vendor** — overlapping CIDR / expose one app only | share one service; overlapping CIDR still works | — |
 | **4** | Route 53 Resolver | **AWS↔on-prem** — hybrid DNS (the glue: `.corp` ↔ `.aws`) | two-way hybrid DNS | reuse lab-2 on-prem |
 | **5** | VPC Peering vs TGW | **AWS↔AWS** — few VPCs (<5–10), the cheap alternative to TGW | non-transitive + measured trade-offs | — |
+| **6** | VPC Lattice | **AWS↔AWS (L7, service-to-service)** — app-layer connectivity across VPCs/accounts, no routing/CIDR coupling | service network + 2 services across VPCs; overlapping CIDR OK; path/header routing + IAM auth | — |
 
 > **Out of scope (noted for completeness):** User↔AWS remote access (WFH) = **AWS Client VPN** (OpenVPN)
 > or **AWS Verified Access** (zero-trust / identity-based); **Direct Connect** = concept-only (no physical
-> port). These 5 labs cover the AWS↔AWS, AWS↔on-prem, and AWS↔vendor traffic classes end-to-end.
+> port). These labs cover the AWS↔AWS (L3 + L7), AWS↔on-prem, and AWS↔vendor traffic classes end-to-end.
 
 ---
 
@@ -153,6 +154,31 @@ graph LR
         TGW (**$0.05/attachment-hour + $0.02/GB** processing).
   - [ ] **MTU:** jumbo **9001** on Peering (intra-region) vs **8500** max over TGW vs **~1500** over VPN.
 
+## Lab 6 — VPC Lattice (L7 service-to-service)
+```mermaid
+graph LR
+  subgraph net["Lattice Service Network (+ IAM auth policy)"]
+    svcA["Service A<br/>(VPC A)"]
+    svcB["Service B<br/>(VPC B, CIDR overlaps)"]
+  end
+  cA["client (VPC A)"] -->|"https://svc-b.<br/>…lattice (path/header routing)"| svcB
+  vpcA[VPC A] -.associated.- net
+  vpcB[VPC B] -.associated.- net
+```
+Different from everything above: **L7 (HTTP/gRPC), not L3 routing**. No route tables, no CIDR planning —
+a client reaches a service by its Lattice DNS name; Lattice handles discovery, routing (path/header),
+and **IAM-based auth** between services. Overlapping CIDRs are a non-issue (it's not routed at L3).
+- **Core:** one **service network**; associate VPC A + VPC B to it; register **Service A** (target =
+  EC2/ALB in VPC A) and **Service B** in VPC B. A client in VPC A calls Service B by its Lattice DNS
+  name and gets a response — **even with overlapping CIDRs**, no peering/TGW.
+- **Stretch:**
+  - [ ] **Path/header routing:** one listener → rules routing `/v1` vs `/v2` (or a header) to different
+        target groups (the L7 feature TGW/PrivateLink can't do).
+  - [ ] **Auth policy (IAM):** attach a service auth policy that only allows a specific principal/VPC →
+        a call from an unauthorized client gets **403** (zero-trust service-to-service).
+  - [ ] **vs PrivateLink/TGW:** note the trade — Lattice = managed L7 mesh-lite, per-request + data cost,
+        newer; PrivateLink = L4 one-service expose; TGW = L3 bulk routing.
+
 ---
 
 ## Direct Connect — concept-only (no physical port to lab)
@@ -160,4 +186,6 @@ Theory + console walkthrough; closest simulation is VPN-over-TGW (lab 2). VIF ma
 
 **Why this order:** TGW is the real-world backbone (#1, with centralized egress as its optional add-on)
 → VPN to on-prem is the most common hybrid need (#2) → PrivateLink solves share-a-service +
-overlapping-CIDR (#3) → hybrid DNS comes with on-prem (#4) → Peering last since TGW supersedes most of it (#5).
+overlapping-CIDR (#3) → hybrid DNS comes with on-prem (#4) → Peering as the cheap few-VPC alternative
+to TGW (#5) → VPC Lattice last: the L7/service-mesh angle on AWS↔AWS, newer and app-layer rather than
+routing (#6).

@@ -46,23 +46,80 @@ cd ~/src/github/trongnvv/aws-iac/network/01-tgw-hub
 # or per layer:  (cd 1-vpc && tofu init && tofu apply)  … then 2-tgw, 3-ssm, 4-ec2
 ```
 
-## Test scenario (proves the segmentation)
-Test hosts are SSM-managed (wait ~1–2 min after apply for the agent to register). Grab the private IPs
-from `./deploy.sh` output (or `cd 4-ec2 && tofu output instances`), then:
-
-| From (SSM into) | Ping `shared` | Ping `prod` | Ping `dev` | Means |
-|---|---|---|---|---|
-| **shared** | — | ✅ reply | ✅ reply | hub reaches both spokes |
-| **prod** | ✅ reply | — | ❌ timeout | spoke→hub OK, **prod ⊥ dev** |
-| **dev** | ✅ reply | ❌ timeout | — | spoke→hub OK, **dev ⊥ prod** |
-
+## Test checklist (pass/fail)
+Run top to bottom. Each check = one step + its PASS/FAIL. Tick the box when PASS. A FAIL points to the
+Troubleshooting row below. First grab the IDs + private IPs:
 ```bash
-aws ssm start-session --target <prod-instance-id>
-  ping -c2 <shared-private-ip>   # ✅ OK
-  ping -c2 <dev-private-ip>      # ❌ times out  ← segmentation working
+cd 4-ec2 && tofu output instances      # {shared,prod,dev} → {id, private_ip}
+# export for the commands below (fill from the output):
+SH_ID=i-shared… ; PR_ID=i-prod… ; DV_ID=i-dev…
+SH_IP=10.0.0.x ; PR_IP=10.1.0.x ; DV_IP=10.2.0.x
 ```
-Cross-check in console: VPC → Transit Gateway route tables → the `spoke` RT has **only** the shared
-CIDR; the `shared` RT has prod + dev.
+
+- [ ] **T0 — all 3 hosts registered in SSM** (wait ~1–2 min after apply)
+  ```bash
+  aws ssm describe-instance-information \
+    --query "InstanceInformationList[].{id:InstanceId,ping:PingStatus}" --output table
+  ```
+  **PASS:** 3 instances, `PingStatus = Online`. **FAIL:** fewer than 3 / not Online → TS "SSM".
+
+- [ ] **T1 — hub → both spokes reachable** (shared can reach prod AND dev)
+  ```bash
+  aws ssm start-session --target "$SH_ID"
+    ping -c3 $PR_IP        # expect replies
+    ping -c3 $DV_IP        # expect replies
+    exit
+  ```
+  **PASS:** both `0% packet loss`. **FAIL:** any timeout → TS "all pings fail".
+
+- [ ] **T2 — spoke → hub reachable** (prod→shared and dev→shared)
+  ```bash
+  aws ssm start-session --target "$PR_ID"
+    ping -c3 $SH_IP        # expect replies
+    exit
+  aws ssm start-session --target "$DV_ID"
+    ping -c3 $SH_IP        # expect replies
+    exit
+  ```
+  **PASS:** both `0% loss`. **FAIL:** one-way only → TS "propagation".
+
+- [ ] **T3 — spoke ⊥ spoke BLOCKED (the segmentation proof)** — prod must NOT reach dev
+  ```bash
+  aws ssm start-session --target "$PR_ID"
+    ping -c3 -W2 $DV_IP    # expect 100% loss / timeout
+    exit
+  ```
+  **PASS:** `100% packet loss` (times out). **FAIL:** gets replies → TS "prod→dev works".
+
+- [ ] **T4 — segmentation is symmetric** — dev must NOT reach prod either
+  ```bash
+  aws ssm start-session --target "$DV_ID"
+    ping -c3 -W2 $PR_IP    # expect 100% loss
+    exit
+  ```
+  **PASS:** `100% packet loss`. **FAIL:** replies → TS "prod→dev works".
+
+- [ ] **T5 — route tables confirm the design** (cross-check, console or CLI)
+  ```bash
+  TGW=$(cd 2-tgw && tofu output -raw tgw_id)
+  # spoke RT should have ONLY the shared CIDR; shared RT should have prod + dev
+  aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id <spoke-rt-id> \
+    --filters Name=state,Values=active --query 'Routes[].DestinationCidrBlock'
+  ```
+  **PASS:** spoke RT = `[10.0.0.0/16]` only; shared RT = prod + dev. **FAIL:** extra route in spoke RT → TS "prod→dev works".
+
+- [ ] **T6 (optional, egress on) — spoke reaches internet via the shared NAT**
+  ```bash
+  # after (cd 5-egress && tofu apply -var enable_egress=true); use the PRIVATE host id:
+  PRIV_ID=$(cd 5-egress && tofu output -json private_instances | python3 -c 'import json,sys;print(json.load(sys.stdin)["prod"]["id"])')
+  NAT_IP=$(cd 5-egress && tofu output -raw nat_public_ip)
+  aws ssm start-session --target "$PRIV_ID"
+    curl -s https://checkip.amazonaws.com    # expect it to equal $NAT_IP
+    exit
+  ```
+  **PASS:** returned IP == `$NAT_IP` (egress goes through the shared NAT). **FAIL:** no output / different IP → TS "egress".
+
+**Result:** all boxes ticked = lab passes (hub-and-spoke works, spokes isolated, optional central egress works).
 
 ## Troubleshooting
 | Symptom | Check |
@@ -72,6 +129,7 @@ CIDR; the `shared` RT has prod + dev.
 | shared→spoke fails but spoke→shared OK (or vice-versa) | TGW **propagation** missing — `shared` RT must have prod+dev propagated; `spoke` RT must have shared propagated. |
 | prod→dev **works** (should not) | `spoke` RT wrongly has a prod/dev route — check it only learns shared; default assoc/propagation must be **disabled** on the TGW. |
 | `2-tgw` apply: remote state empty | run `1-vpc` first (`./deploy.sh` does the order). |
+| **egress**: curl returns nothing / wrong IP | 1) `5-egress` applied with `-var enable_egress=true`? 2) spoke private RT has `0/0 → TGW`? 3) TGW spoke RT has `0/0 → shared attachment`? 4) shared TGW-subnet RT has `0/0 → NAT`? 5) using the **private** host id (not the public one)? |
 
 ## Test EC2 recipe (reused by every lab)
 Small, cheap, no SSH: `t4g.micro` + Amazon Linux 2023 (arm64) + `AmazonSSMManagedInstanceCore` role in
