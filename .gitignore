@@ -15,7 +15,7 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
-
+**__pycache__/
 # ── Local handoff / secrets (never commit real tokens/creds) ──────────────────
 env.sh
 .env
