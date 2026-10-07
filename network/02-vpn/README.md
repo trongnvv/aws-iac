@@ -118,112 +118,100 @@ TGW_RT=$(cd 2-tgw && tofu output -raw tgw_route_table_id)
 **Result:** all boxes ticked = lab passes (IPsec tunnels UP, BGP established, bidirectional reachability on-prem ↔ cloud, on-prem route learned over BGP).
 
 ## Troubleshooting — debug flow
-When a check fails, don't guess: **walk the data path layer by layer** — and for the pure-IP hops (SG →
-route → TGW propagation) **let VPC Reachability Analyzer pinpoint the blocking hop** first. The IPsec/BGP
-layer (T1/T2) is below the analyzer's view, so those flows SSM into the appliance instead. General method:
-vault `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+*Written in Simplified Technical English (ASD-STE100): one instruction per sentence, active voice, present tense.*
 
-First grab the ids the flows reuse (instance ids come straight from the `5-ec2` output):
+A check can fail. Do not guess. Walk the data path one layer at a time. For the pure-IP hops (SG, route,
+TGW propagation) first use VPC Reachability Analyzer. It names the hop that blocks the path. The IPsec and
+BGP layer (T1/T2) is below the analyzer's view. For those flows, SSM into the appliance instead. For the
+general method, read the vault file `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+
+### Step 0 — find the hop that blocks (you do not need SSH or ping)
+Use VPC Reachability Analyzer for the IP-forwarding failures (T3/T4). It reads the live config and names
+the hop that blocks the path. The analyzer does not see inside the IPsec tunnel. If it shows
+`Reachable=True` but ping still fails, the break is the tunnel or BGP layer. Go to Flow A or Flow B.
+The `analyze()` helper is in the vault file (see above). Run it between two instances:
 ```bash
-eval "$(cd 5-ec2 && tofu output -json instances | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-for k,p in {"aws":"AWS","onprem":"ON"}.items():
-    v=d[k]; print(p+"_ID="+v["id"]+"; "+p+"_IP="+v["private_ip"])
-')"
-SS_ID=$(cd 4-strongswan && tofu output -raw strongswan_instance_id)
-SS_EIP=$(cd 3-vpn && tofu output -raw strongswan_eip)
-VPN_ID=$(cd 3-vpn && tofu output -raw vpn_connection_id)
-TGW_RT=$(cd 2-tgw && tofu output -raw tgw_route_table_id)
-echo "aws=$AWS_ID/$AWS_IP  onprem=$ON_ID/$ON_IP  strongswan=$SS_ID eip=$SS_EIP"   # sanity-check
+analyze "$AWS_ID" "$ON_ID"
+```
+`Reachable` shows `True` or `False`. `Blocked` gives the hop (for example `ENI_SG_RULES_MISMATCH`,
+`NO_ROUTE_TO_DESTINATION`, `TGW_ROUTE_TABLE_...`). Go to the flow for that hop.
+
+### Flow A — a tunnel is DOWN (T1); `VgwTelemetry Status=DOWN`
+IPsec did not come up. BGP and ping cannot work either. Check the hops in this order. Stop at the first hop that is wrong.
+1. **Appliance IPsec state** — SSM into the appliance. Run `sudo swanctl --list-sas`. Both children must be `INSTALLED`. If nothing is listed, IKE does not complete. Read the log with `sudo journalctl -u strongswan -n50`.
+2. **Customer gateway IP** — the CGW in `3-vpn` must equal the appliance EIP. If the two do not match, the EIP is not associated. To correct it, edit `4-strongswan` (`aws_eip_association`).
+3. **PSK** — the PSK on the appliance must match the AWS tunnel PSK. An auth-failure in the log means the PSK or `id-aws` is wrong. To correct it, edit `4-strongswan/user_data.sh.tftpl` (`ipsec.secrets`).
+4. **SG** — the appliance SG must permit UDP 500, UDP 4500, and protocol 50 (ESP) from the two AWS tunnel outside IPs. If it does not, edit `1-vpc/security.tf` (`aws_security_group.strongswan`).
+
+Standalone check for the telemetry:
+```bash
+aws ec2 describe-vpn-connections --vpn-connection-ids "$VPN_ID" --query 'VpnConnections[].VgwTelemetry[].{Status:Status,Msg:StatusMessage}' --output table
 ```
 
-### Step 0 — ask the analyzer which hop blocks (no SSH/ping needed)
-Reachability Analyzer models the **VPC/TGW/SG/route** path end-to-end, so use it for the IP-forwarding
-failures (T3/T4). It does **not** see inside the IPsec tunnel — if it reports `Reachable=True` yet ping
-still fails, the break is the tunnel/BGP layer → go to Flow A/B instead.
+### Flow B — BGP is not established (T2); the neighbor is stuck `Active`/`Connect`, `PfxRcd=0`
+IPsec is UP (Flow A passes) but BGP runs inside the tunnel and does not peer. This is the built-blind FRR
+config in `4-strongswan/user_data.sh.tftpl`. It is the most likely part to need live tuning. SSM into the
+appliance. Check the hops in this order. Stop at the first hop that is wrong.
+1. **VTI** — each VTI must be up with its cgw inside /30 (`169.254.x.x`). If a VTI is absent, the `ip link add … type vti key N` + fwmark pairing failed. This is the crux hop.
+2. **Neighbor address** — the neighbor must be the vgw inside address of each tunnel (`tunnel1_vgw_inside`/`tunnel2_vgw_inside` from `3-vpn`), not the cgw side.
+3. **ASN pairing** — FRR must peer as on-prem 65000 (`onprem_bgp_asn`) to amazon 64512 (`amazon_side_asn`). A wrong remote-as leaves the neighbor `Active`.
+4. **Route policy** — the FRR config must contain `no bgp ebgp-requires-policy`. FRR 9 filters all routes without it.
+
+Standalone check on the appliance:
 ```bash
-analyze() {  # analyze <src-instance-id> <dst-instance-id>  → prints Reachable + the blocking component
-  pid=$(aws ec2 create-network-insights-path --source "$1" --destination "$2" --protocol icmp \
-        --query NetworkInsightsPath.NetworkInsightsPathId --output text)
-  aid=$(aws ec2 start-network-insights-analysis --network-insights-path-id "$pid" \
-        --query NetworkInsightsAnalysis.NetworkInsightsAnalysisId --output text)
-  aws ec2 wait network-insights-analysis-available --network-insights-analysis-ids "$aid" 2>/dev/null
-  aws ec2 describe-network-insights-analyses --network-insights-analysis-ids "$aid" \
-    --query 'NetworkInsightsAnalyses[0].{Reachable:NetworkPathFound,Blocked:Explanations[0].ExplanationCode}' --output table
-  aws ec2 delete-network-insights-path --network-insights-path-id "$pid" >/dev/null 2>&1   # cleanup ($0.10/analysis)
-}
-analyze "$AWS_ID" "$ON_ID"   # aws → on-prem;  swap args for the reverse
+sudo vtysh -c 'show bgp summary'
 ```
-`Reachable=True/False` is the verdict; `Blocked` names the hop (`ENI_SG_RULES_MISMATCH`,
-`NO_ROUTE_TO_DESTINATION`, `TGW_ROUTE_TABLE_...`, …). Then go to the matching flow:
 
-### Flow A — tunnel DOWN (T1): `VgwTelemetry Status=DOWN`
-IPsec never came up, so BGP and ping can't either. Confirm then walk the IKE/ESP path:
+### Flow C — a ping fails one or both ways (T3/T4); tunnels and BGP are UP
+Run `analyze` from Step 0 both ways to find the blamed hop. Then check that hop. If the analyzer shows
+`Reachable=True` but ping still times out, the break is inside the tunnel (Flow A/B) or at appliance
+forwarding (step 5). The analyzer cannot see those. Check the hops in this order. Stop at the first hop that is wrong.
+1. **SG** — the SG must permit ICMP from both `10.0.0.0/8` and `192.168.0.0/16`. If it does not, edit `1-vpc/security.tf`. (`ENI_SG_RULES_MISMATCH` points here.)
+2. **VPC route** — the aws RT must contain `192.168.0.0/16 → tgw-…`. The onprem RT must contain `10.10.0.0/16 → the strongSwan ENI`. If a route is absent, apply `2-tgw` (aws side) or `4-strongswan` (onprem side). (`NO_ROUTE_TO_DESTINATION` points here.)
+3. **TGW propagation** — go to Flow D. A missing `192.168/16` propagation blocks aws→onprem at the TGW.
+4. **Return route** — a one-way result means the reverse path is broken. Check the reverse route, the reverse SG, and the reverse propagation.
+5. **Appliance forwarding** — the analyzer cannot see this. On the appliance, `source_dest_check` must be false (`4-strongswan`, `aws_instance.strongswan`) and `net.ipv4.ip_forward` must be 1.
+
+Standalone check for one route table:
 ```bash
-aws ec2 describe-vpn-connections --vpn-connection-ids "$VPN_ID" \
-  --query 'VpnConnections[].VgwTelemetry[].{Status:Status,LastChange:LastStatusChange,Msg:StatusMessage}' \
-  --output table
+aws ec2 describe-route-tables --route-table-ids <rt> --query 'RouteTables[0].Routes'
 ```
-1. **Appliance IPsec state** — SSM in and check the SAs: `aws ssm start-session --target "$SS_ID"` → `sudo swanctl --list-sas`. Both children should be `INSTALLED`. Nothing listed / `CONNECTING` → IKE isn't completing. `sudo journalctl -u strongswan -n50` shows *why* (proposal mismatch, auth failure).
-2. **Customer gateway IP == appliance EIP** — the CGW in `3-vpn` dials back to the EIP; if the EIP isn't associated the two-way IKE never forms. `aws ec2 describe-customer-gateways --query 'CustomerGateways[].IpAddress'` must equal `$SS_EIP`. Mismatch → EIP not associated (`4-strongswan` `aws_eip_association`).
-3. **PSK match** — `sudo swanctl --list-conns` on the appliance, compare the secret against `(cd 3-vpn && tofu output tunnel1_psk)` / `tunnel2_psk`. Auth-failure in the log = PSK or `id-aws` (keyed by tunnel outside IP) mismatch. Fix: how `4-strongswan/user_data.sh.tftpl` writes `ipsec.secrets`.
-4. **SG lets IKE/ESP in** — the appliance SG must allow **UDP 500 + UDP 4500 + protocol 50 (ESP)** from AWS's two tunnel outside IPs. Fix in `1-vpc/security.tf` `aws_security_group.strongswan` (lab opens these to `0.0.0.0/0`). `tunnel1_address`/`tunnel2_address` outputs in `3-vpn` are those AWS endpoints.
 
-### Flow B — BGP not established (T2): neighbor stuck `Active`/`Connect`, `PfxRcd=0`
-IPsec is UP (Flow A passes) but BGP rides inside the tunnel and isn't peering. **This is the built-blind
-appliance config (`4-strongswan/user_data.sh.tftpl` — FRR) — the most likely thing to need live tuning;
-flag it.** SSM into the appliance:
+### Flow D — the on-prem CIDR is not propagated (T5); `192.168/16` is missing from the TGW RT
+Read the TGW route table. The route `192.168.0.0/16` must be present with `Type=propagated` (learned over
+BGP from the VPN attachment). Check the hops in this order. Stop at the first hop that is wrong.
+1. **BGP** — BGP must be Established first (T2/Flow B). The route is learned, not static. Fix BGP first.
+2. **Attachment** — the VPN attachment must be associated and propagated to this RT (`3-vpn`, `aws_ec2_transit_gateway_route_table_association.vpn` + `...propagation.vpn`).
+3. **Advertise** — FRR must advertise `192.168.0.0/16` out (`network 192.168.0.0/16` in `4-strongswan/user_data.sh.tftpl`).
+4. **Dynamic VPN** — the `aws_vpn_connection` must be dynamic (`static_routes_only = false`, `3-vpn/vpn.tf`), not static.
+
+Standalone check:
 ```bash
-aws ssm start-session --target "$SS_ID"
-  sudo swanctl --list-sas                 # children INSTALLED? (BGP needs IPsec up first)
-  ip addr show type vti                   # each VTI has its cgw inside /30? (169.254.x.x)
-  sudo vtysh -c 'show bgp summary'        # neighbor State = Established, not Active/Connect
-  sudo vtysh -c 'show ip route bgp'       # 10.10.0.0/16 learned via the vgw inside addrs?
-  exit
+aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$TGW_RT" --filters Name=state,Values=active --query 'Routes[].{cidr:DestinationCidrBlock,type:Type}' --output table
 ```
-Walk it: 1) **VTIs up with the inside /30** — missing → the `ip link add … type vti key N` + fwmark pairing failed (the crux hop). 2) **neighbor = the vgw inside address** of each tunnel (`tunnel1_vgw_inside`/`tunnel2_vgw_inside` from `3-vpn`), **not** the cgw side. 3) **ASN pairing** — FRR must peer as on-prem **65000** (`onprem_bgp_asn`) to amazon **64512** (`amazon_side_asn`); a swapped/wrong remote-as leaves it `Active`. 4) **`no bgp ebgp-requires-policy`** present — FRR 9 filters all routes without it. All in the FRR block of `4-strongswan/user_data.sh.tftpl`.
 
-### Flow C — ping fails one or both ways (T3/T4), tunnels+BGP UP
-Run `analyze "$AWS_ID" "$ON_ID"` (and the reverse) from Step 0 to find the blamed hop, then confirm that
-hop. If the analyzer says `Reachable=True` but ping still times out → the break is **inside the tunnel**
-(Flow A/B) or **appliance forwarding** (step 5 below), which the analyzer can't see. Walk the path:
-1. **SG** — `aws ec2 describe-security-groups --group-ids <sg> --query 'SecurityGroups[0].IpPermissions'` must allow ICMP from **both** `10.0.0.0/8` **and** `192.168.0.0/16`. Fix in `1-vpc/security.tf` (`aws_security_group.this` + `.strongswan`). (`ENI_SG_RULES_MISMATCH` points here.)
-2. **VPC route out** — aws RT needs `192.168.0.0/16 → tgw-…`; onprem RT needs `10.10.0.0/16 → the strongSwan ENI`. `aws ec2 describe-route-tables --route-table-ids <rt> --query 'RouteTables[0].Routes'`. Missing → `2-tgw` (aws side) or `4-strongswan` (onprem → ENI route). (`NO_ROUTE_TO_DESTINATION`.)
-3. **TGW route table / VPN attachment propagation** — see Flow D; a missing `192.168/16` propagation blocks aws→onprem at the TGW (`TGW_ROUTE_TABLE_...`).
-4. **Return route** — a one-way result = the reverse path is broken. aws→onprem OK but onprem→aws fails: onprem RT lacks `10.10/16 → ENI`, or aws SG blocks ICMP from `192.168/16`, or the aws attachment isn't propagated. Reverse case: aws RT lacks `192.168/16 → TGW`, or onprem SG blocks `10/8`, or the VPN attachment's `192.168/16` isn't propagated (T5/Flow D).
-5. **Appliance forwarding** (analyzer-blind) — both ways fail with `Reachable=True`: on the appliance `source_dest_check=false` (`4-strongswan` `aws_instance.strongswan`) **and** `sudo sysctl net.ipv4.ip_forward` = 1.
+### Flow E — a small ping works but a large ping fails or stalls (MSS/MTU)
+This is not a reachability break. It is PMTUD. The VPN path is about 1500, but IPsec overhead cuts the
+effective MSS to about 1379. The VTI MTU is 1419 in user_data. Add MSS clamping in
+`4-strongswan/user_data.sh.tftpl` (an `iptables` TCPMSS `--clamp-mss-to-pmtu` rule). Then re-test the
+large ping on a live tunnel.
 
-### Flow D — on-prem CIDR not propagated (T5): `192.168/16` missing from the TGW RT
+Standalone re-test on the host:
 ```bash
-aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$TGW_RT" \
-  --filters Name=state,Values=active \
-  --query 'Routes[].{cidr:DestinationCidrBlock,type:Type,state:State}' --output table
+ping -M do -s <size> $ON_IP
 ```
-Expect `192.168.0.0/16` present with `Type=propagated` (learned over BGP from the VPN attachment).
-Missing → 1) **BGP must be Established first** (T2/Flow B) — the route is learned, not static; fix BGP
-first. 2) **VPN attachment associated + propagated** to this RT (`3-vpn`
-`aws_ec2_transit_gateway_route_table_association.vpn` + `...propagation.vpn`). 3) FRR actually advertises
-`192.168.0.0/16` out (`network 192.168.0.0/16` in the FRR config, `4-strongswan/user_data.sh.tftpl`).
-4) the `aws_vpn_connection` is **dynamic** (`static_routes_only = false`, `3-vpn/vpn.tf`), not static.
 
-### Flow E — ping works small, fails/stalls on large payloads (MSS/MTU)
-Not a reachability break — PMTUD. VPN path ≈ 1500 but IPsec overhead cuts the effective MSS to ~1379.
-VTI MTU is set to 1419 in user_data; add **MSS clamping** (`iptables -t mangle -A FORWARD -p tcp
---tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu` in `4-strongswan/user_data.sh.tftpl`) and re-test
-with `ping -M do -s <size>` on a live tunnel.
-
-### Quick table (symptom → first move)
-| Symptom | First move |
+### Quick table (symptom → first action)
+| Symptom | First action |
 |---|---|
-| `start-session` fails / not in SSM | wait ~1–2 min; `aws ssm describe-instance-information` → all 3 `PingStatus=Online`? Else check IGW route (`1-vpc`) + the `AmazonSSMManagedInstanceCore` profile (`net-lab-vpn-ssm`, `4-strongswan`). Plugin missing → `brew install --cask session-manager-plugin`. |
-| tunnel `Status=DOWN` (T1) | Flow A (appliance IPsec → CGW IP == EIP → PSK → SG UDP 500/4500 + ESP) |
-| BGP neighbor `Active`/`Connect`, `PfxRcd=0` (T2) | Flow B (VTI /30 → vgw inside peer → ASN 65000↔64512 → `ebgp-requires-policy`) — built-blind FRR config |
-| ping times out, tunnels+BGP UP (T3/T4) | Flow C (analyzer → SG → VPC route → TGW propagation → return route → appliance forwarding) |
-| ping one-way only | Flow C step 4 (the reverse path: return route / return SG / reverse propagation) |
-| `192.168/16` not in TGW RT (T5) | Flow D (BGP up first → VPN attachment propagation → FRR advertises → dynamic VPN) |
-| large pings stall, small OK | Flow E (MSS/MTU clamping) |
-| `3-vpn`/`4-strongswan` apply: remote state empty | run the earlier layer first (`./deploy.sh` does the order). |
+| `start-session` fails, or the host is not in SSM | Wait 1–2 minutes. Run `aws ssm describe-instance-information`. All 3 hosts must show `PingStatus=Online`. If not, check the IGW route (`1-vpc`) and the `AmazonSSMManagedInstanceCore` profile (`net-lab-vpn-ssm`, `4-strongswan`). If the plugin is absent, run `brew install --cask session-manager-plugin`. |
+| A tunnel shows `Status=DOWN` (T1) | Go to Flow A (appliance IPsec → CGW IP == EIP → PSK → SG UDP 500/4500 + ESP). |
+| BGP neighbor is `Active`/`Connect`, `PfxRcd=0` (T2) | Go to Flow B (VTI /30 → vgw inside peer → ASN 65000↔64512 → `ebgp-requires-policy`). |
+| A ping times out but tunnels and BGP are UP (T3/T4) | Go to Flow C (analyzer → SG → VPC route → TGW propagation → return route → appliance forwarding). |
+| A ping works one way only | Go to Flow C step 4 (the reverse path). |
+| `192.168/16` is not in the TGW RT (T5) | Go to Flow D (BGP up first → attachment propagation → FRR advertises → dynamic VPN). |
+| A large ping stalls but a small ping works | Go to Flow E (MSS/MTU clamping). |
+| `3-vpn`/`4-strongswan` apply: remote state empty | Run the earlier layer first (`./deploy.sh` does the order). |
 
 ## Test EC2 recipe (reused by every lab)
 Small, cheap, no SSH: `t4g.micro` + Amazon Linux 2023 (arm64) + `AmazonSSMManagedInstanceCore` role

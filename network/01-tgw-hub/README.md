@@ -125,65 +125,68 @@ echo "shared=$SH_ID/$SH_IP  prod=$PR_ID/$PR_IP  dev=$DV_ID/$DV_IP"   # sanity-ch
 **Result:** all boxes ticked = lab passes (hub-and-spoke works, spokes isolated, optional central egress works).
 
 ## Troubleshooting — debug flow
-When a check fails, don't guess: **let VPC Reachability Analyzer pinpoint the blocking hop**, then jump to
-the matching fix. General method: vault `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+*Written in Simplified Technical English (ASD-STE100): one instruction per sentence, active voice, present tense.*
 
-### Step 0 — ask the analyzer which hop blocks (no SSH/ping needed)
+A check can fail. Do not guess. First use VPC Reachability Analyzer. It finds the hop that blocks the path.
+Then go to the flow for that hop. For the general method, read the vault file
+`01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+
+### Step 0 — find the hop that blocks (you do not need SSH or ping)
+Use VPC Reachability Analyzer. It reads the live config and names the hop that blocks the path.
+The `analyze()` helper is in the vault file (see above). Run it between two instances:
 ```bash
-analyze() {  # analyze <src-instance-id> <dst-instance-id>  → prints Reachable + the blocking component
-  pid=$(aws ec2 create-network-insights-path --source "$1" --destination "$2" --protocol icmp \
-        --query NetworkInsightsPath.NetworkInsightsPathId --output text)
-  aid=$(aws ec2 start-network-insights-analysis --network-insights-path-id "$pid" \
-        --query NetworkInsightsAnalysis.NetworkInsightsAnalysisId --output text)
-  aws ec2 wait network-insights-analysis-available --network-insights-analysis-ids "$aid" 2>/dev/null
-  aws ec2 describe-network-insights-analyses --network-insights-analysis-ids "$aid" \
-    --query 'NetworkInsightsAnalyses[0].{Reachable:NetworkPathFound,Blocked:Explanations[0].ExplanationCode}' --output table
-  aws ec2 delete-network-insights-path --network-insights-path-id "$pid" >/dev/null 2>&1   # cleanup ($0.10/analysis)
-}
-analyze "$SH_ID" "$PR_IP_ID_or_instance"   # e.g. analyze "$SH_ID" "$PR_ID"
+analyze "$SH_ID" "$PR_ID"
 ```
-`Reachable=True/False` is the verdict; `Blocked` names the hop (`ENI_SG_RULES_MISMATCH`, `NO_ROUTE_TO_DESTINATION`,
-`TGW_ROUTE_TABLE_...`, …). Then go to the matching flow:
+`Reachable` shows `True` or `False`. `Blocked` gives the hop (for example `ENI_SG_RULES_MISMATCH`,
+`NO_ROUTE_TO_DESTINATION`, `TGW_ROUTE_TABLE_...`). Go to the flow for that hop.
 
-### Flow A — a ping that SHOULD work fails (T1/T2) → analyzer says `Reachable=False`
-Walk the path in the order the analyzer blames (or all, top-down):
-1. **SG** — `aws ec2 describe-security-groups --group-ids <sg> --query 'SecurityGroups[0].IpPermissions'` → must allow ICMP from `10.0.0.0/8`. Fix in `1-vpc/security.tf`.
-2. **VPC route** — `aws ec2 describe-route-tables --route-table-ids <rt> --query 'RouteTables[0].Routes'` → must have `10.0.0.0/8 → tgw-…`. Missing → `2-tgw` `aws_route.tgw` didn't apply.
-3. **TGW attachment** — `aws ec2 describe-transit-gateway-vpc-attachments --query '...[].State'` → all `available`.
-4. **TGW propagation** — see Flow C. (shared→spoke OK but spoke→shared fails, or vice-versa = a one-sided propagation.)
+### Flow A — a ping must work but it fails (T1/T2); the analyzer shows `Reachable=False`
+Check the hops in this order. Stop at the first hop that is wrong.
+1. **SG** — the SG must permit ICMP from `10.0.0.0/8`. If it does not, edit `1-vpc/security.tf`.
+2. **VPC route** — the VPC route table must contain `10.0.0.0/8 → tgw-…`. If the route is absent, apply `2-tgw` (`aws_route.tgw`).
+3. **TGW attachment** — each attachment must be `available`.
+4. **TGW propagation** — go to Flow C. (One direction works and the other fails = one-sided propagation.)
 
-### Flow B — prod→dev WORKS but must be blocked (T3/T4) → segmentation leak
+Standalone check for one hop:
 ```bash
-SPOKE_RT=$(cd 2-tgw && tofu output -raw spoke_route_table_id)
-aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$SPOKE_RT" \
+aws ec2 describe-route-tables --route-table-ids <rt> --query 'RouteTables[0].Routes'
+```
+
+### Flow B — prod reaches dev but it must not (T3/T4); the segmentation leaks
+Read the spoke TGW route table. It must contain only `10.0.0.0/16` (shared). A `10.1/16` or `10.2/16` route is
+wrong: the spoke table learned a peer. The cause is a stray propagation, or the TGW default-route-table
+propagation is on. To correct it, edit `2-tgw/tgw.tf`. Set `default_route_table_propagation = "disable"`. Keep
+only the `spokes_learn_shared` propagation on the spoke table.
+```bash
+aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id $(cd 2-tgw && tofu output -raw spoke_route_table_id) \
   --filters Name=state,Values=active --query 'Routes[].DestinationCidrBlock' --output text
 ```
-Must be **only** `10.0.0.0/16` (shared). If a `10.1/16` or `10.2/16` shows up → the spoke RT wrongly learned a
-peer → a stray propagation exists, or the TGW default route-table propagation wasn't disabled. Fix in `2-tgw/tgw.tf`
-(`default_route_table_propagation = "disable"` + only `spokes_learn_shared` propagation on the spoke RT).
 
-### Flow C — reachable one way only → TGW propagation asymmetric
-`shared` RT must have **prod + dev** propagated; `spoke` RT must have **shared** propagated. Check both:
+### Flow C — the path works in one direction only; the TGW propagation is asymmetric
+The `shared` table must have **prod + dev** propagated. The `spoke` table must have **shared** propagated.
+Read each table (`shared_route_table_id`, `spoke_route_table_id`) and compare:
 ```bash
-for rt in $(cd 2-tgw && tofu output -raw shared_route_table_id) "$SPOKE_RT"; do
-  echo "== $rt =="; aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$rt" \
-    --filters Name=state,Values=active --query 'Routes[].[DestinationCidrBlock,Type]' --output text
-done
+aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id <rt> \
+  --filters Name=state,Values=active --query 'Routes[].[DestinationCidrBlock,Type]' --output text
 ```
 
-### Flow D — egress (T6): curl returns nothing / wrong IP
-Walk the return path hop by hop: 1) `5-egress` applied with `-var enable_egress=true`? 2) spoke **private** RT has
-`0/0 → TGW`? 3) TGW spoke RT has `0/0 → shared attachment`? 4) shared TGW-subnet RT has `0/0 → NAT`? 5) NAT in a
-**public** subnet with `0/0 → IGW`? 6) using the **private** host id (not the public one)?
+### Flow D — egress (T6): curl returns nothing, or the wrong IP
+Check the return path, one hop per step:
+1. Apply `5-egress` with `-var enable_egress=true`.
+2. The spoke **private** table must have `0/0 → TGW`.
+3. The TGW spoke table must have `0/0 → shared attachment`.
+4. The shared TGW-subnet table must have `0/0 → NAT`.
+5. Put the NAT in a **public** subnet with `0/0 → IGW`.
+6. Use the **private** host id, not the public one.
 
-### Quick table (symptom → first move)
-| Symptom | First move |
+### Quick table (symptom → first action)
+| Symptom | First action |
 |---|---|
-| `start-session` fails / not in SSM | wait ~1–2 min; `aws ssm describe-instance-information` → PingStatus Online? Else check IGW route + `AmazonSSMManagedInstanceCore` profile. Plugin missing → `brew install --cask session-manager-plugin`. |
-| ping should-work fails | Flow A (analyzer → SG → route → attachment → propagation) |
-| prod→dev works (shouldn't) | Flow B (spoke RT has a stray peer route) |
-| reachable one way only | Flow C (asymmetric propagation) |
-| egress curl nothing/wrong IP | Flow D |
+| `start-session` fails, or the host is not in SSM | Wait 1–2 minutes. Run `aws ssm describe-instance-information`. The host must show `PingStatus=Online`. If not, check the IGW route and the `AmazonSSMManagedInstanceCore` profile. If the plugin is absent, run `brew install --cask session-manager-plugin`. |
+| A ping that must work fails | Go to Flow A (analyzer → SG → route → attachment → propagation). |
+| prod reaches dev but it must not | Go to Flow B (the spoke table has a stray peer route). |
+| The path works in one direction only | Go to Flow C (asymmetric propagation). |
+| egress curl returns nothing or the wrong IP | Go to Flow D. |
 | `2-tgw` apply: remote state empty | run `1-vpc` first (`./deploy.sh` does the order) |
 
 ## Test EC2 recipe (reused by every lab)

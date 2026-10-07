@@ -105,133 +105,89 @@ echo "service name=$SVC_NAME  endpoint=$EP_ID  dns=$EP_DNS  consumer=$CON_ID  pr
 **Result:** all boxes ticked = lab passes (PrivateLink reaches a service across identical `10.0.0.0/16` CIDRs via the interface endpoint, with no L3 route between the VPCs).
 
 ## Troubleshooting — debug flow
-When a check fails, don't guess — **walk the PrivateLink path one hop at a time** from the side the
-symptom points to, then jump to the matching fix (`.tf` file named at each step). The path is:
-`consumer host → endpoint SG → endpoint ENI  ══PrivateLink══  NLB listener :80 → target group → service SG → service EC2 (labhttp)`.
-General method: vault `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+*Written in Simplified Technical English (ASD-STE100): one instruction per sentence, active voice, present tense.*
 
-Re-export the IDs first if you opened a fresh shell (same block as the test checklist), and derive the
-target-group ARN once (no `tofu output` for it):
+A check can fail. Do not guess. Walk the PrivateLink path one hop at a time. Start from the side that the
+symptom points to. Then go to the flow for that hop and edit the `.tf` file that the step names. The path is
+`consumer host → endpoint SG → endpoint ENI ══PrivateLink══ NLB listener :80 → target group → service SG → service EC2 (labhttp)`.
+For the general method, read the vault file `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+
+### Step 0 — confirm the consumer→ENI leg with the analyzer
+PrivateLink is not L3. The analyzer cannot trace end-to-end through the tunnel. The analyzer can prove one
+leg: **consumer host → endpoint ENI**. It checks that the SG, route and NACL let the host reach the
+endpoint ENI private IP in VPC B. The `analyze()` helper is in the vault file (see above). Resolve the
+endpoint ENI id, then run the helper between the consumer host and that ENI.
 ```bash
-TG_ARN=$(aws elbv2 describe-target-groups --names net-lab-pl-tg \
-  --query 'TargetGroups[0].TargetGroupArn' --output text)
+aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "$EP_ID" --query 'VpcEndpoints[0].NetworkInterfaceIds[0]' --output text
+```
+`Reachable=False` with `ENI_SG_RULES_MISMATCH` shows the endpoint SG blocks the host. Go to Flow B, step 1.
+`Reachable=True` but T3 still hangs shows the block is past the ENI. Go to Flow B, steps 2–3 (provider side).
+
+### Flow A — endpoint not Available (T2 ≠ `available`)
+Read the endpoint state. Then go to the case for that state.
+- **`pendingAcceptance`** — the endpoint service has `acceptance_required=true` and nobody accepted. This is
+  a mismatch with the lab design. `2-provider` sets it `false`. Edit `2-provider/provider.tf` and set
+  `acceptance_required=false`, or accept the connection with the command below.
+- **`failed`** — the endpoint has a subnet or SG problem. The `service_name` in `3-consumer` does not match
+  T1's `$SVC_NAME`, or the subnet or SG is invalid. Check `aws_vpc_endpoint.service` (`service_name`,
+  `subnet_ids`) and `aws_security_group.endpoint` in `3-consumer`.
+- **`pending`** — the endpoint still provisions. Wait ~1 minute. Run the check again.
+```bash
+aws ec2 accept-vpc-endpoint-connections --service-id <vpce-svc-id> --vpc-endpoint-ids "$EP_ID"
 ```
 
-### Step 0 — VPC Reachability Analyzer (confirm the consumer→ENI leg)
-PrivateLink is *not* L3, so the analyzer can't trace end-to-end through the tunnel. What it **can** prove
-is the leg that trips most often: **consumer host → endpoint ENI** (does SG/route/NACL let the host reach
-the endpoint's private IP in VPC B?). If this leg is clean, the fault is past the ENI — on the provider
-side (Flows for T3/T1). Run it against the endpoint ENI:
+### Flow B — curl hangs / no response (T3 — the key path)
+Walk provider-side from the ENI outward. Stop at the first hop that is wrong.
+1. **Endpoint SG** — the SG must allow TCP 80/443 from VPC B (`10.0.0.0/16`). If it does not, edit
+   `aws_security_group.endpoint` in `3-consumer`. Step 0 flags this hop as `ENI_SG_RULES_MISMATCH`.
+2. **NLB target health** — read the target health. This is the most common cause of a hang. `healthy` means
+   the target is fine, so go to step 3 or step 1. `unhealthy` or `unused` means the service does not answer
+   the health check. Check the **service SG**: it must allow :80 from the NLB subnet or the VPC A CIDR. If it
+   does not, edit `aws_security_group.provider_svc` in `1-vpc`. Also check the **http server**: SSM into the
+   provider host, run `systemctl status labhttp`, and run `curl -s localhost:80`. A dead or absent unit means
+   the user_data is not finished (wait ~1 minute) or the unit failed. The unit lives in `2-provider/provider.tf`.
+3. **NLB listener** — the NLB must have a TCP :80 listener that forwards to the target group. If the listener
+   is absent, edit `aws_lb_listener.service` in `2-provider`.
+4. **Analyzer** — run Step 0 to isolate the consumer side from the provider side. `Reachable=True` to the ENI
+   but a hang on curl means the fault is in steps 2–3 (provider). The analyzer stops at the ENI.
+
+Check that you curl **`$EP_DNS`** (the `vpce-…vpce.amazonaws.com` name), not the service's own DNS.
+`private_dns_enabled=false` here, so only the endpoint name resolves to the ENI.
 ```bash
-analyze() {  # analyze <src-instance-id> <dst-eni-id>  → prints Reachable + the blocking component
-  pid=$(aws ec2 create-network-insights-path --source "$1" --destination "$2" \
-        --protocol tcp --destination-port 80 \
-        --query NetworkInsightsPath.NetworkInsightsPathId --output text)
-  aid=$(aws ec2 start-network-insights-analysis --network-insights-path-id "$pid" \
-        --query NetworkInsightsAnalysis.NetworkInsightsAnalysisId --output text)
-  aws ec2 wait network-insights-analysis-available --network-insights-analysis-ids "$aid" 2>/dev/null
-  aws ec2 describe-network-insights-analyses --network-insights-analysis-ids "$aid" \
-    --query 'NetworkInsightsAnalyses[0].{Reachable:NetworkPathFound,Blocked:Explanations[0].ExplanationCode}' --output table
-  aws ec2 delete-network-insights-path --network-insights-path-id "$pid" >/dev/null 2>&1   # cleanup ($0.10/analysis)
-}
-# resolve the endpoint ENI id, then analyze consumer host → ENI:
-EP_ENI=$(aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "$EP_ID" \
-  --query 'VpcEndpoints[0].NetworkInterfaceIds[0]' --output text)
-analyze "$CON_ID" "$EP_ENI"
+aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --query 'TargetHealthDescriptions[].{target:Target.Id,health:TargetHealth.State,why:TargetHealth.Reason}' --output table
 ```
-`Reachable=False` with `ENI_SG_RULES_MISMATCH` → endpoint SG (Flow: curl hangs, step 1). `Reachable=True`
-but T3 still hangs → the block is **past** the ENI → Flow: curl hangs, steps 2–3 (provider side).
 
-### Flow: endpoint not Available (T2 ≠ `available`)
+### Flow C — endpoint service not found / not Available (T1 empty or `Pending`)
+Read the service configuration. Then go to the case for that state.
+- **empty** — `2-provider` is not applied, or the NLB ARN is not wired into `aws_vpc_endpoint_service.service`.
+  Confirm the NLB exists. If the NLB is absent, the `2-provider` apply did not complete. Apply `2-provider` again.
+- **`Pending`** — the service provisions within ~1 minute of apply. Wait and run the check again. If the state
+  stays `Pending`, confirm the NLB reached `active`. The service config is `aws_vpc_endpoint_service.service`
+  in `2-provider/provider.tf`.
 ```bash
-aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "$EP_ID" \
-  --query 'VpcEndpoints[0].{State:State,DNS:DnsEntries}' --output json
+aws elbv2 describe-load-balancers --names net-lab-pl-nlb --query 'LoadBalancers[0].State.Code' --output text
 ```
-- **`pendingAcceptance`** → the endpoint **service** has `acceptance_required=true` but nobody accepted —
-  a mismatch with this lab's design (`2-provider` sets it `false`). Either fix the service back to
-  `acceptance_required=false` in `2-provider/provider.tf`, or accept the connection:
-  `aws ec2 accept-vpc-endpoint-connections --service-id <vpce-svc-id> --vpc-endpoint-ids "$EP_ID"`.
-- **`failed`** → subnet or SG problem on the endpoint itself: the `service_name` wired into `3-consumer`
-  doesn't match T1's `$SVC_NAME`, or the chosen subnet/SG is invalid. Re-check `3-consumer` `aws_vpc_endpoint.service`
-  (`service_name`, `subnet_ids`) and its SG `aws_security_group.endpoint` (`3-consumer`).
-- **`pending`** → still provisioning; wait ~1 min and re-run.
 
-### Flow: curl hangs / no response (T3 — the key path)
-Walk provider-side from the ENI outward. Each step has a concrete check + where to fix.
-1. **Endpoint SG lets the host in?** — must allow TCP 80/443 from VPC B:
-   ```bash
-   aws ec2 describe-security-groups --group-ids "$(cd 3-consumer && tofu output -raw endpoint_sg_id)" \
-     --query 'SecurityGroups[0].IpPermissions[].{proto:IpProtocol,from:FromPort,cidr:IpRanges[].CidrIp}'
-   ```
-   No 80 (or 443) from `10.0.0.0/16` → fix `3-consumer` `aws_security_group.endpoint`. (Step 0 flags this as `ENI_SG_RULES_MISMATCH`.)
-2. **NLB target healthy?** — the single most common cause of a hang:
-   ```bash
-   aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
-     --query 'TargetHealthDescriptions[].{target:Target.Id,health:TargetHealth.State,why:TargetHealth.Reason}' --output table
-   ```
-   - `healthy` → the target is fine; the fault is the listener or the SG path (steps 3–1), not the service.
-   - `unhealthy` / `unused` → the **service** isn't answering the health check. Causes:
-     - **service SG** doesn't allow :80 from the NLB subnet / VPC A CIDR → fix `1-vpc` `aws_security_group.provider_svc`.
-     - **http server not running** — SSM into the provider host and check the unit:
-       ```bash
-       aws ssm start-session --target "$SVC_ID"
-         systemctl status labhttp        # expect active (running); if dead: journalctl -u labhttp
-         curl -s localhost:80            # local proof the server serves
-         exit
-       ```
-       Dead/absent → user_data hasn't finished (give it ~1 min) or the unit failed; the unit lives in `2-provider/provider.tf`.
-3. **Listener exists on :80?** — NLB must have a TCP :80 listener forwarding to the TG:
-   ```bash
-   NLB_ARN=$(aws elbv2 describe-load-balancers --names net-lab-pl-nlb --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-   aws elbv2 describe-listeners --load-balancer-arn "$NLB_ARN" \
-     --query 'Listeners[].{port:Port,proto:Protocol}' --output table
-   ```
-   No `80/TCP` row → fix `2-provider` `aws_lb_listener.service`.
-4. **Confirm the consumer→ENI leg with the analyzer** (Step 0) — isolates "is it the consumer side or the
-   provider side?". `Reachable=True` to the ENI but curl still hangs → the problem is steps 2–3 (provider),
-   not the consumer. (The analyzer stops at the ENI — it does **not** trace through PrivateLink to the NLB.)
-
-Also sanity-check you're curling **`$EP_DNS`** (the `vpce-…vpce.amazonaws.com` name), not the service's own
-DNS — `private_dns_enabled=false` here, so only the endpoint name resolves to the ENI.
-
-### Flow: endpoint service not found / not Available (T1 empty or `Pending`)
+### Flow D — T4 "prove it's not L3" gives an unexpected result
+T4 expects the direct `curl http://$SVC_IP` (the provider's private IP in VPC A) to time out. There is no
+route between the two `10.0.0.0/16` VPCs. A direct curl that succeeds means an L3 path leaked in, so
+PrivateLink does not bypass the overlap. Hunt the stray route. Check that no peering exists. Then read both
+VPCs' route tables and look for a cross-VPC entry (a `10.0.0.0/16` route that targets a `pcx-…` or `tgw-…`).
+Remove any peering or any such route. This lab has no peering and no TGW between A and B. The endpoint is the
+only sanctioned path.
 ```bash
-aws ec2 describe-vpc-endpoint-service-configurations \
-  --query "ServiceConfigurations[?ServiceName=='$SVC_NAME'].{name:ServiceName,state:ServiceState,accept:AcceptanceRequired}" \
-  --output table
+aws ec2 describe-vpc-peering-connections --query 'VpcPeeringConnections[].{id:VpcPeeringConnectionId,state:Status.Code}' --output table
 ```
-- **empty** → `2-provider` not applied, or the NLB ARN isn't wired into `aws_vpc_endpoint_service.service`.
-  Confirm the NLB exists: `aws elbv2 describe-load-balancers --names net-lab-pl-nlb`. If the NLB is missing,
-  `2-provider` apply didn't complete — re-apply that layer.
-- **`Pending`** → it provisions within ~1 min of apply; wait and re-run. Persisting `Pending` → check the NLB
-  reached `active` (`... --query 'LoadBalancers[0].State.Code'`). Service config is `2-provider/provider.tf` `aws_vpc_endpoint_service.service`.
 
-### Flow: T4 "prove it's not L3" gives an unexpected result
-T4 expects the direct `curl http://$SVC_IP` (provider's **private** IP in VPC A) to **time out** — there is
-no route between the two `10.0.0.0/16` VPCs. If that direct curl **succeeds**, an L3 path leaked in and the
-overlap isn't actually being bypassed by PrivateLink. Hunt the stray route:
-```bash
-aws ec2 describe-vpc-peering-connections \
-  --query 'VpcPeeringConnections[].{id:VpcPeeringConnectionId,state:Status.Code}' --output table   # expect: empty
-# inspect both VPCs' route tables for a cross-VPC entry (a 10.0.0.0/16 → pcx-/tgw-… that shouldn't be there):
-for vpc in $(cd 1-vpc && tofu output -json vpc_ids | python3 -c 'import json,sys;print(" ".join(json.load(sys.stdin).values()))'); do
-  echo "== vpc $vpc =="
-  aws ec2 describe-route-tables --filters Name=vpc-id,Values=$vpc \
-    --query 'RouteTables[].Routes[].{dst:DestinationCidrBlock,gw:GatewayId,pcx:VpcPeeringConnectionId,tgw:TransitGatewayId}' --output table
-done
-```
-Any peering row or a route targeting a `pcx-…`/`tgw-…` → remove it; this lab intentionally has **no**
-peering/TGW between A and B. The only sanctioned reachability is the endpoint.
-
-### Quick table (symptom → flow)
-| Symptom | First move |
+### Quick table (symptom → first action)
+| Symptom | First action |
 |---|---|
-| endpoint not `available` (T2) | Flow: endpoint not Available — `pendingAcceptance` = acceptance mismatch, `failed` = subnet/SG/service_name |
-| curl hangs / empty / refused (T3) | Flow: curl hangs — endpoint SG → **target health** → listener :80 → analyzer (consumer→ENI leg) |
-| service name empty / Pending (T1) | Flow: endpoint service not found — `2-provider` applied? NLB `active`? ARN wired? |
-| direct `$SVC_IP` curl unexpectedly works (T4) | Flow: T4 unexpected — `describe-vpc-peering-connections` empty? stray route in either VPC RT? |
-| curl connects but target shows `unhealthy` | Flow: curl hangs, step 2 — service SG (`1-vpc`) + `systemctl status labhttp` on the provider host |
-| `start-session` fails / host not in SSM (T0) | wait ~1–2 min; `aws ssm describe-instance-information` → PingStatus Online? Else public IP + IGW route (`1-vpc`) + `net-lab-pl-ssm` profile (`2-provider`/`4-ec2`). Plugin missing → `brew install --cask session-manager-plugin`. |
+| endpoint not `available` (T2) | Go to Flow A. `pendingAcceptance` = acceptance mismatch; `failed` = subnet/SG/service_name. |
+| curl hangs / empty / refused (T3) | Go to Flow B (endpoint SG → target health → listener :80 → analyzer). |
+| service name empty / Pending (T1) | Go to Flow C. Check `2-provider` applied, NLB `active`, ARN wired. |
+| direct `$SVC_IP` curl works, but it must not (T4) | Go to Flow D. Check no peering and no stray route in either VPC RT. |
+| curl connects but the target is `unhealthy` | Go to Flow B, step 2. Check the service SG (`1-vpc`) and `systemctl status labhttp` on the provider host. |
+| `start-session` fails, or the host is not in SSM (T0) | Wait 1–2 minutes. Run `aws ssm describe-instance-information`. The host must show `PingStatus=Online`. If not, check the public IP, the IGW route (`1-vpc`) and the `net-lab-pl-ssm` profile (`2-provider`/`4-ec2`). If the plugin is absent, run `brew install --cask session-manager-plugin`. |
 
 ## Test EC2 recipe (reused by every lab)
 Small, cheap, no SSH: `t4g.micro` + Amazon Linux 2023 (arm64) + the `net-lab-pl-ssm`

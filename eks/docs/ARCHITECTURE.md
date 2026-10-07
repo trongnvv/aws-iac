@@ -3,6 +3,15 @@
 Each size builds on the previous. `foundation` (S3 state + Route 53/ACM) is shared
 by all. Diagrams are Mermaid — GitHub renders them inline.
 
+## Reference infographic (dev/lab)
+
+![EKS reference architecture](architecture.png)
+
+> Diagram-as-code: `architecture.py` (Python [`diagrams`](https://diagrams.mingrammer.com/), one-shot
+> infographic — topology + layered deploy + verify + cost). Regenerate:
+> `uv run --native-tls --with diagrams python architecture.py` (needs graphviz: `brew install graphviz`;
+> `--native-tls` so uv trusts the corporate CA). The Mermaid diagrams below are the per-size breakdown.
+
 **Colour legend:** 🟣 foundation · 🟩 EKS control plane (AWS-managed) · 🟠 public subnets/edge · 🟢 private-app subnets · ⬜ private-isolated subnets · 🔵 network (NAT/firewall/IGW) · 🟦 add-ons · 🟡 AWS managed services · ⚪ external.
 
 Accuracy notes (apply to every size):

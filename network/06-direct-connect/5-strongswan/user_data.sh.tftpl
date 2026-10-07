@@ -1,0 +1,202 @@
+#!/bin/bash
+# =============================================================================================
+#  strongSwan + FRR on-prem router bootstrap  (VPN transport stand-in for a Direct Connect Transit VIF)
+# =============================================================================================
+#  WHY this shape:
+#   - This appliance plays the on-prem customer router. In a REAL Direct Connect it would BGP-peer the
+#     DX Gateway over a physical Transit VIF; in this lab it carries the SAME packets over an IPsec
+#     Site-to-Site VPN (the documented "DX + VPN" transport stand-in) so the data path works end to end.
+#   - AWS Site-to-Site VPN with BGP is ROUTE-BASED. Each of the 2 tunnels is a point-to-point IPsec SA
+#     whose traffic selectors are 0.0.0.0/0 ↔ 0.0.0.0/0; the actual prefixes that cross are chosen by
+#     BGP, not by the IPsec policy. On Linux we model that with a VTI (Virtual Tunnel Interface) per
+#     tunnel: IPsec protects everything hitting the VTI, FRR runs BGP over the VTI's inside /30.
+#   - strongSwan installs the SAs with mark-based routing (mark_in/mark_out) so packets routed onto
+#     vti1/vti2 get encrypted. We disable the kernel's automatic policy install and let the VTI +
+#     fwmark carry traffic — the standard libreswan/strongSwan-on-AWS pattern.
+#   - FRR (bgpd) peers with the AWS side's inside address on each tunnel, advertises the on-prem CIDR
+#     (${onprem_cidr}), and learns the cloud CIDR (${aws_cidr}) back.
+#
+#  ⚠️ BUILT BLIND (no live apply). This is a best-effort config. Expect to tune live — see the README
+#     "⚠️ Verify live" section. strongSwan 5.9 on AL2023 uses swanctl/vici (not the legacy ipsec.conf);
+#     config below uses swanctl.conf.
+# ---------------------------------------------------------------------------------------------
+set -euxo pipefail
+exec > >(tee /var/log/cgw-bootstrap.log) 2>&1
+
+# --- tunnel parameters injected from the aws_vpn_connection (4-vpn) ---------------------------
+T1_OUTSIDE="${tunnel1_address}"       # AWS public endpoint, tunnel 1
+T2_OUTSIDE="${tunnel2_address}"       # AWS public endpoint, tunnel 2
+T1_CGW_IN="${tunnel1_cgw_inside}"     # our (on-prem) inside addr, tunnel 1 (e.g. 169.254.x.1/30)
+T1_VGW_IN="${tunnel1_vgw_inside}"     # AWS inside addr, tunnel 1  — BGP neighbor
+T2_CGW_IN="${tunnel2_cgw_inside}"     # our inside addr, tunnel 2
+T2_VGW_IN="${tunnel2_vgw_inside}"     # AWS inside addr, tunnel 2  — BGP neighbor
+T1_PSK="${tunnel1_psk}"
+T2_PSK="${tunnel2_psk}"
+ONPREM_ASN="${onprem_bgp_asn}"        # 65000
+AWS_ASN="${amazon_side_asn}"          # 64512
+AWS_CIDR="${aws_cidr}"                # 10.30.0.0/16  (learned from AWS; informational)
+ONPREM_CIDR="${onprem_cidr}"          # 192.168.30.0/16 (we advertise this)
+
+# inside addresses arrive as bare IPs; AWS inside links are /30.
+T1_CGW_IP="$${T1_CGW_IN%%/*}"
+T2_CGW_IP="$${T2_CGW_IN%%/*}"
+T1_VGW_IP="$${T1_VGW_IN%%/*}"
+T2_VGW_IP="$${T2_VGW_IN%%/*}"
+
+# --- packages --------------------------------------------------------------------------------
+dnf -y update
+dnf -y install strongswan frr iproute tcpdump bind-utils
+
+# --- kernel: forwarding + loosen rp_filter (asymmetric paths over 2 tunnels) ------------------
+cat >/etc/sysctl.d/99-cgw.conf <<EOF
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+EOF
+sysctl --system
+
+# --- VTIs: one per tunnel, keyed by fwmark so strongSwan's SA encrypts traffic routed onto them ---
+# key/mark values (100/200) are arbitrary but must match the swanctl mark_in/mark_out below.
+create_vti () {
+  local dev=$1 key=$2 local_pub=$3 remote_pub=$4 cgw_ip=$5
+  ip link add "$dev" type vti local "$local_pub" remote "$remote_pub" key "$key" || true
+  ip addr add "$cgw_ip/30" dev "$dev" || true
+  ip link set "$dev" up mtu 1419        # VPN path MSS/MTU headroom — tune live (see README)
+  # Don't let the kernel install an XFRM policy for the VTI's own subnet.
+  sysctl -w "net.ipv4.conf.$dev.disable_policy=1" || true
+  sysctl -w "net.ipv4.conf.$dev.rp_filter=0" || true
+}
+
+# Public IP of THIS instance (the EIP) as seen locally is the private IP; IPsec binds to the private IP
+# and NAT-T handles the 1:1 EIP mapping. local=%defaultroute-equivalent → use the primary IP.
+LOCAL_IP="$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')"
+
+create_vti vti1 100 "$LOCAL_IP" "$T1_OUTSIDE" "$T1_CGW_IP"
+create_vti vti2 200 "$LOCAL_IP" "$T2_OUTSIDE" "$T2_CGW_IP"
+
+# =============================================================================================
+#  strongSwan (swanctl.conf) — 2 connections, IKEv2, AWS-compatible proposals, fwmark per tunnel
+# =============================================================================================
+mkdir -p /etc/swanctl/conf.d
+cat >/etc/swanctl/swanctl.conf <<EOF
+connections {
+  aws-tunnel1 {
+    version = 2
+    local_addrs  = $LOCAL_IP
+    remote_addrs = $T1_OUTSIDE
+    # AWS defaults: IKEv2, AES128/SHA1/MODP1024 (DH group 2) are broadly accepted; stronger is OK too.
+    proposals = aes128-sha1-modp1024,aes256-sha256-modp2048
+    # DPD so a dead tunnel is detected quickly (feeds BGP failover).
+    dpd_delay = 10s
+    local  { auth = psk }
+    remote { auth = psk }
+    children {
+      aws-tunnel1 {
+        local_ts  = 0.0.0.0/0
+        remote_ts = 0.0.0.0/0
+        esp_proposals = aes128-sha1-modp1024,aes256-sha256-modp2048
+        # route-based: tie this SA to vti1 via fwmark 100; no auto kernel policy.
+        mark_in  = 100
+        mark_out = 100
+        start_action = trap|start
+        dpd_action   = restart
+        rekey_time   = 3600s
+      }
+    }
+  }
+
+  aws-tunnel2 {
+    version = 2
+    local_addrs  = $LOCAL_IP
+    remote_addrs = $T2_OUTSIDE
+    proposals = aes128-sha1-modp1024,aes256-sha256-modp2048
+    dpd_delay = 10s
+    local  { auth = psk }
+    remote { auth = psk }
+    children {
+      aws-tunnel2 {
+        local_ts  = 0.0.0.0/0
+        remote_ts = 0.0.0.0/0
+        esp_proposals = aes128-sha1-modp1024,aes256-sha256-modp2048
+        mark_in  = 200
+        mark_out = 200
+        start_action = trap|start
+        dpd_action   = restart
+        rekey_time   = 3600s
+      }
+    }
+  }
+}
+
+secrets {
+  ike-tunnel1 {
+    id-aws   = $T1_OUTSIDE
+    secret   = "$T1_PSK"
+  }
+  ike-tunnel2 {
+    id-aws   = $T2_OUTSIDE
+    secret   = "$T2_PSK"
+  }
+}
+EOF
+chmod 600 /etc/swanctl/swanctl.conf
+
+systemctl enable strongswan
+systemctl restart strongswan
+# load config into the running daemon
+swanctl --load-all || true
+swanctl --initiate --child aws-tunnel1 || true
+swanctl --initiate --child aws-tunnel2 || true
+
+# =============================================================================================
+#  FRR (bgpd) — eBGP to each AWS tunnel inside address; advertise on-prem, learn cloud
+# =============================================================================================
+sed -i 's/^bgpd=no/bgpd=yes/' /etc/frr/daemons
+
+cat >/etc/frr/frr.conf <<EOF
+frr version 9
+frr defaults traditional
+hostname onprem-cgw
+log syslog informational
+!
+router bgp $ONPREM_ASN
+ bgp router-id $T1_CGW_IP
+ no bgp ebgp-requires-policy
+ ! --- tunnel 1 neighbor (AWS side inside addr) ---
+ neighbor $T1_VGW_IP remote-as $AWS_ASN
+ neighbor $T1_VGW_IP timers 10 30
+ neighbor $T1_VGW_IP ebgp-multihop 1
+ ! --- tunnel 2 neighbor ---
+ neighbor $T2_VGW_IP remote-as $AWS_ASN
+ neighbor $T2_VGW_IP timers 10 30
+ neighbor $T2_VGW_IP ebgp-multihop 1
+ !
+ address-family ipv4 unicast
+  ! advertise the on-prem network to AWS
+  network $ONPREM_CIDR
+  neighbor $T1_VGW_IP activate
+  neighbor $T2_VGW_IP activate
+  ! Prefer tunnel 1 inbound, keep tunnel 2 as backup. For ECMP (stretch) instead, drop the prepend
+  ! and add 'maximum-paths 2' so both tunnels load-balance.
+  neighbor $T2_VGW_IP route-map T2-BACKUP in
+ exit-address-family
+!
+! make the advertised on-prem net resolvable even if no exact local route — pull from kernel.
+ip route $ONPREM_CIDR blackhole
+!
+route-map T2-BACKUP permit 10
+ set local-preference 90
+!
+EOF
+chmod 640 /etc/frr/frr.conf
+
+systemctl enable frr
+systemctl restart frr
+
+# =============================================================================================
+#  routing: send the cloud CIDR into the tunnels (BGP installs it, but seed a fallback so the box
+#  forwards onprem→cloud even before BGP converges). ECMP via both VTIs once BGP is up.
+# =============================================================================================
+# (BGP-learned routes from FRR get installed into the kernel via zebra; no static needed normally.)
+
+echo "cgw-bootstrap done"

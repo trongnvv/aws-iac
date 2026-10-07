@@ -19,11 +19,57 @@ diagram + test scenario + troubleshooting + the test-EC2 recipe** (`t4g.micro` +
 | **3** | PrivateLink | **AWS↔3rd-party/vendor** — overlapping CIDR / expose one app only | share one service; overlapping CIDR still works | — |
 | **4** | Route 53 Resolver | **AWS↔on-prem** — hybrid DNS (the glue: `.corp` ↔ `.aws`) | two-way hybrid DNS | reuse lab-2 on-prem |
 | **5** | VPC Peering vs TGW | **AWS↔AWS** — few VPCs (<5–10), the cheap alternative to TGW | non-transitive + measured trade-offs | — |
-| **6** | VPC Lattice | **AWS↔AWS (L7, service-to-service)** — app-layer connectivity across VPCs/accounts, no routing/CIDR coupling | service network + 2 services across VPCs; overlapping CIDR OK; path/header routing + IAM auth | — |
+| **6** | Direct Connect → TGW | **AWS↔on-prem** — private dedicated link (DX Gateway + Transit VIF → TGW); the physical cross-connect is the one partner/manual step | DX Gateway + TGW association + allowed-prefixes; VPN as transport stand-in for the physical port | VPC + strongSwan (stand-in) |
+| **7** | VPC Lattice | **AWS↔AWS (L7, service-to-service)** — app-layer connectivity across VPCs/accounts, no routing/CIDR coupling | service network + 2 services across VPCs; overlapping CIDR OK; path/header routing + IAM auth | — |
 
+> **Direct Connect note:** a real DX needs a physical cross-connect at a DX location via a partner, so
+> `aws_dx_connection` + the VIF can't be fully provisioned by IaC. Lab 6 builds the **as-code** half
+> (DX Gateway + DXGW↔TGW association + routing) and uses a **Site-to-Site VPN as the transport
+> stand-in** (the documented "DX + VPN" pattern) so the data path actually works; the physical port is
+> documented as the one manual step.
+>
 > **Out of scope (noted for completeness):** User↔AWS remote access (WFH) = **AWS Client VPN** (OpenVPN)
-> or **AWS Verified Access** (zero-trust / identity-based); **Direct Connect** = concept-only (no physical
-> port). These labs cover the AWS↔AWS (L3 + L7), AWS↔on-prem, and AWS↔vendor traffic classes end-to-end.
+> or **AWS Verified Access** (zero-trust / identity-based). These labs cover the AWS↔AWS (L3 + L7),
+> AWS↔on-prem (VPN + DX), and AWS↔vendor traffic classes end-to-end.
+
+## How the labs differ (side by side)
+
+The biggest practical difference is **what routing you have to wire** — some need route tables both
+ways, some need none at all. Read this column first.
+
+| Lab | Layer | **Routing you create** | Transitive | Overlapping CIDR | Encryption | Key thing it proves |
+|---|---|---|---|---|---|---|
+| **1 TGW** | L3 | **TGW route tables** (assoc + propagation) + VPC route `10/8 → TGW` | ✅ (by design) | ❌ breaks silently | ❌ (AWS backbone) | hub-and-spoke + segment (prod ⊥ dev) |
+| **2 VPN** | L3 | **none static — BGP** advertises/learns routes dynamically | ✅ via TGW | ❌ | ✅ IPsec | hybrid on-prem + BGP (failover, ECMP) |
+| **3 PrivateLink** | L4 | **none** — traffic goes to the endpoint **ENI**, not routed between VPCs | n/a (one service) | ✅ works fine | TLS to the service | share one service across overlapping CIDRs |
+| **4 Resolver** | DNS | peering route only for the **DNS query leg** (53) — not for data | n/a | — (keep CIDRs distinct) | — | two-way hybrid DNS (`.corp` ↔ `.aws`) |
+| **5 Peering** | L3 | **a route in each RT, both ways, per pair** (no auto-propagation) | ❌ non-transitive | ❌ | ❌ | non-transitivity — the cheap few-VPC option |
+| **6 Direct Connect** | L3 | **BGP** over the Transit VIF + DXGW↔TGW association (allowed prefixes); physical port is manual | ✅ via TGW | ❌ | ❌ by default (add MACsec / VPN-over-DX) | private dedicated link to on-prem (DX Gateway, Transit VIF) |
+| **7 Lattice** | L7 | **none** — no route tables, no CIDR planning; reach by Lattice **DNS name** | n/a (service mesh) | ✅ irrelevant | mTLS + IAM auth | L7 service-to-service, auth, overlap OK |
+
+**Read:** TGW/Peering are the "**you own the routes**" labs (Peering = manual both-ways per pair, non-transitive;
+TGW = route tables + propagation, transitive). VPN and Direct Connect hand routing to **BGP**. PrivateLink, Lattice and the
+DNS data-plane need **no route at all** — that's why they shrug off overlapping CIDRs. Full trade-off /
+decision map: vault `Concept.md`.
+
+## Recommended learning order (easy → hard)
+
+Folder numbers above are **stable architecture IDs** (by traffic class), not the order to learn in.
+For a smooth difficulty ramp, do them in this sequence — the lab number stays the same, only the order
+you tackle them changes:
+
+1. **Lab 5 — Peering** · *easy* — plain L3 routing between VPCs; non-transitivity; baseline latency/MTU.
+2. **Lab 3 — PrivateLink** · *easy–med* — share one service (L4); overlapping CIDR; no routing to reason about.
+3. **Lab 1 — TGW hub + egress** · *med* — hub-and-spoke, route tables + propagation, segmentation, central NAT.
+4. **Lab 7 — Lattice** · *med–high* — step up to L7; service network + IAM auth; forget CIDR/routes.
+5. **Lab 2 — VPN → TGW** · *hard* — simulated on-prem (strongSwan) + IPsec + **BGP** — the deepest debug.
+6. **Lab 6 — Direct Connect → TGW** · *hard* — **reuses lab 2's BGP/TGW muscle** + DX Gateway/Transit VIF;
+   the physical port is the one manual step, VPN is the transport stand-in — so do it right after lab 2.
+7. **Lab 4 — Route 53 Resolver** · *synthesis* — two-way hybrid DNS; self-contained, but it lands best once
+   the hybrid-connectivity idea (lab 2/6) is in your head.
+
+> ✅ Lab 1 done. Suggested next by this ramp: **Lab 5 → Lab 3** (quick wins), then **Lab 7**, then the
+> hybrid trio **2 → 6 → 4**.
 
 ---
 
@@ -154,7 +200,32 @@ graph LR
         TGW (**$0.05/attachment-hour + $0.02/GB** processing).
   - [ ] **MTU:** jumbo **9001** on Peering (intra-region) vs **8500** max over TGW vs **~1500** over VPN.
 
-## Lab 6 — VPC Lattice (L7 service-to-service)
+## Lab 6 — Direct Connect → TGW (private dedicated link)
+```mermaid
+graph LR
+  subgraph onprem["On-prem (router at a DX location)"]
+    r["customer router<br/>BGP"]
+  end
+  r == "Transit VIF (802.1Q · BGP)" ==> dxgw{{"DX Gateway<br/>(global, logical)"}}
+  dxgw == "association + allowed prefixes" ==> tgw{{TGW}} --- vpcA["VPC(s)"]
+  r -. "⚠ physical cross-connect = partner/manual" .- dxgw
+  r -. "VPN transport stand-in (lab)" .-> tgw
+```
+A **private, dedicated** path to on-prem (vs lab 2's VPN over the public internet): consistent latency,
+higher bandwidth, lower egress cost — but a **physical cross-connect at a DX location via a partner**,
+so it can't be fully provisioned by IaC.
+- **Core (as-code):** `aws_dx_gateway` + **DXGW↔TGW association** with **allowed prefixes**; the TGW +
+  VPC side. This is the real, runnable half. Because no physical port exists in the lab, a **Site-to-Site
+  VPN is wired as the transport stand-in** (the documented "DX + VPN" topology) so the data path works
+  end to end — SSM in and ping across, same as lab 2.
+- 🖐️ **The one manual/physical step:** request a **connection** (or hosted connection) from a DX partner,
+  then create the **Transit VIF** on it (BGP to the DX Gateway). Documented, not automated.
+- **Stretch:**
+  - [ ] **VIF types:** Private VIF → VGW (single VPC) vs **Transit VIF** → DXGW → TGW (multi-VPC) vs Public VIF (S3/DDB).
+  - [ ] **Encryption:** DX is **not encrypted** by default → MACsec (on supported ports) or **VPN-over-DX**.
+  - [ ] **Resilience:** 2 connections / 2 DX locations; DX primary + **VPN backup** (lower BGP local-pref).
+
+## Lab 7 — VPC Lattice (L7 service-to-service)
 ```mermaid
 graph LR
   subgraph net["Lattice Service Network (+ IAM auth policy)"]
