@@ -48,12 +48,15 @@ cd ~/src/github/trongnvv/aws-iac/network/01-tgw-hub
 
 ## Test checklist (pass/fail)
 Run top to bottom. Each check = one step + its PASS/FAIL. Tick the box when PASS. A FAIL points to the
-Troubleshooting row below. First grab the IDs + private IPs:
+Troubleshooting row below. First auto-export the IDs + private IPs from the tofu output (no manual fill):
 ```bash
-cd 4-ec2 && tofu output instances      # {shared,prod,dev} → {id, private_ip}
-# export for the commands below (fill from the output):
-SH_ID=i-shared… ; PR_ID=i-prod… ; DV_ID=i-dev…
-SH_IP=10.0.0.x ; PR_IP=10.1.0.x ; DV_IP=10.2.0.x
+eval "$(cd 4-ec2 && tofu output -json instances | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for k,p in {"shared":"SH","prod":"PR","dev":"DV"}.items():
+    v=d[k]; print(p+"_ID="+v["id"]+"; "+p+"_IP="+v["private_ip"])
+')"
+echo "shared=$SH_ID/$SH_IP  prod=$PR_ID/$PR_IP  dev=$DV_ID/$DV_IP"   # sanity-check
 ```
 
 - [ ] **T0 — all 3 hosts registered in SSM** (wait ~1–2 min after apply)
@@ -121,15 +124,67 @@ SH_IP=10.0.0.x ; PR_IP=10.1.0.x ; DV_IP=10.2.0.x
 
 **Result:** all boxes ticked = lab passes (hub-and-spoke works, spokes isolated, optional central egress works).
 
-## Troubleshooting
-| Symptom | Check |
+## Troubleshooting — debug flow
+When a check fails, don't guess: **let VPC Reachability Analyzer pinpoint the blocking hop**, then jump to
+the matching fix. General method: vault `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+
+### Step 0 — ask the analyzer which hop blocks (no SSH/ping needed)
+```bash
+analyze() {  # analyze <src-instance-id> <dst-instance-id>  → prints Reachable + the blocking component
+  pid=$(aws ec2 create-network-insights-path --source "$1" --destination "$2" --protocol icmp \
+        --query NetworkInsightsPath.NetworkInsightsPathId --output text)
+  aid=$(aws ec2 start-network-insights-analysis --network-insights-path-id "$pid" \
+        --query NetworkInsightsAnalysis.NetworkInsightsAnalysisId --output text)
+  aws ec2 wait network-insights-analysis-available --network-insights-analysis-ids "$aid" 2>/dev/null
+  aws ec2 describe-network-insights-analyses --network-insights-analysis-ids "$aid" \
+    --query 'NetworkInsightsAnalyses[0].{Reachable:NetworkPathFound,Blocked:Explanations[0].ExplanationCode}' --output table
+  aws ec2 delete-network-insights-path --network-insights-path-id "$pid" >/dev/null 2>&1   # cleanup ($0.10/analysis)
+}
+analyze "$SH_ID" "$PR_IP_ID_or_instance"   # e.g. analyze "$SH_ID" "$PR_ID"
+```
+`Reachable=True/False` is the verdict; `Blocked` names the hop (`ENI_SG_RULES_MISMATCH`, `NO_ROUTE_TO_DESTINATION`,
+`TGW_ROUTE_TABLE_...`, …). Then go to the matching flow:
+
+### Flow A — a ping that SHOULD work fails (T1/T2) → analyzer says `Reachable=False`
+Walk the path in the order the analyzer blames (or all, top-down):
+1. **SG** — `aws ec2 describe-security-groups --group-ids <sg> --query 'SecurityGroups[0].IpPermissions'` → must allow ICMP from `10.0.0.0/8`. Fix in `1-vpc/security.tf`.
+2. **VPC route** — `aws ec2 describe-route-tables --route-table-ids <rt> --query 'RouteTables[0].Routes'` → must have `10.0.0.0/8 → tgw-…`. Missing → `2-tgw` `aws_route.tgw` didn't apply.
+3. **TGW attachment** — `aws ec2 describe-transit-gateway-vpc-attachments --query '...[].State'` → all `available`.
+4. **TGW propagation** — see Flow C. (shared→spoke OK but spoke→shared fails, or vice-versa = a one-sided propagation.)
+
+### Flow B — prod→dev WORKS but must be blocked (T3/T4) → segmentation leak
+```bash
+SPOKE_RT=$(cd 2-tgw && tofu output -raw spoke_route_table_id)
+aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$SPOKE_RT" \
+  --filters Name=state,Values=active --query 'Routes[].DestinationCidrBlock' --output text
+```
+Must be **only** `10.0.0.0/16` (shared). If a `10.1/16` or `10.2/16` shows up → the spoke RT wrongly learned a
+peer → a stray propagation exists, or the TGW default route-table propagation wasn't disabled. Fix in `2-tgw/tgw.tf`
+(`default_route_table_propagation = "disable"` + only `spokes_learn_shared` propagation on the spoke RT).
+
+### Flow C — reachable one way only → TGW propagation asymmetric
+`shared` RT must have **prod + dev** propagated; `spoke` RT must have **shared** propagated. Check both:
+```bash
+for rt in $(cd 2-tgw && tofu output -raw shared_route_table_id) "$SPOKE_RT"; do
+  echo "== $rt =="; aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id "$rt" \
+    --filters Name=state,Values=active --query 'Routes[].[DestinationCidrBlock,Type]' --output text
+done
+```
+
+### Flow D — egress (T6): curl returns nothing / wrong IP
+Walk the return path hop by hop: 1) `5-egress` applied with `-var enable_egress=true`? 2) spoke **private** RT has
+`0/0 → TGW`? 3) TGW spoke RT has `0/0 → shared attachment`? 4) shared TGW-subnet RT has `0/0 → NAT`? 5) NAT in a
+**public** subnet with `0/0 → IGW`? 6) using the **private** host id (not the public one)?
+
+### Quick table (symptom → first move)
+| Symptom | First move |
 |---|---|
-| `start-session` fails / instance not in SSM | Agent needs ~1–2 min; instance must have public IP + IGW route (`1-vpc`) and the `AmazonSSMManagedInstanceCore` profile (`3-ssm`, `4-ec2`). `aws ssm describe-instance-information`. |
-| **All** pings time out (even shared→prod) | 1) SG allows ICMP from `10.0.0.0/8`? 2) VPC route table has `10/8 → TGW` (`2-tgw` `aws_route.tgw`)? 3) attachments `available`? |
-| shared→spoke fails but spoke→shared OK (or vice-versa) | TGW **propagation** missing — `shared` RT must have prod+dev propagated; `spoke` RT must have shared propagated. |
-| prod→dev **works** (should not) | `spoke` RT wrongly has a prod/dev route — check it only learns shared; default assoc/propagation must be **disabled** on the TGW. |
-| `2-tgw` apply: remote state empty | run `1-vpc` first (`./deploy.sh` does the order). |
-| **egress**: curl returns nothing / wrong IP | 1) `5-egress` applied with `-var enable_egress=true`? 2) spoke private RT has `0/0 → TGW`? 3) TGW spoke RT has `0/0 → shared attachment`? 4) shared TGW-subnet RT has `0/0 → NAT`? 5) using the **private** host id (not the public one)? |
+| `start-session` fails / not in SSM | wait ~1–2 min; `aws ssm describe-instance-information` → PingStatus Online? Else check IGW route + `AmazonSSMManagedInstanceCore` profile. Plugin missing → `brew install --cask session-manager-plugin`. |
+| ping should-work fails | Flow A (analyzer → SG → route → attachment → propagation) |
+| prod→dev works (shouldn't) | Flow B (spoke RT has a stray peer route) |
+| reachable one way only | Flow C (asymmetric propagation) |
+| egress curl nothing/wrong IP | Flow D |
+| `2-tgw` apply: remote state empty | run `1-vpc` first (`./deploy.sh` does the order) |
 
 ## Test EC2 recipe (reused by every lab)
 Small, cheap, no SSH: `t4g.micro` + Amazon Linux 2023 (arm64) + `AmazonSSMManagedInstanceCore` role in

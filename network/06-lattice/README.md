@@ -128,16 +128,98 @@ instance **Healthy**.
 **Result:** T0–T3 ticked = lab passes (L7 service-to-service across overlapping CIDRs, no peering/TGW).
 T4 ticked = IAM auth enforcement proven (zero-trust at the Lattice edge).
 
-## Troubleshooting
-| Symptom (TS row) | Check |
+## Troubleshooting — debug flow
+When a check fails, don't guess: Lattice is **managed L7, not L3 routing**, so debugging is **control-plane
+first** — walk the Lattice objects (association → service → listener → target health → auth) in order and
+read their status. General method: vault `01_Knowledge/Network/Cloud-Connectivity/Debug-Strategy.md`.
+
+### Step 0 — grab the IDs, then read the Lattice state (NOT Reachability Analyzer)
+```bash
+CLIENT_ID=$(cd 4-ec2 && tofu output -raw client_instance_id)
+DNS=$(cd 4-ec2 && tofu output -raw service_dns_name)
+SN_ID=$(cd 2-service-network && tofu output -raw service_network_id)
+SN_ARN=$(cd 2-service-network && tofu output -raw service_network_arn)
+SVC_ID=$(cd 3-service && tofu output -raw service_id)
+SVC_ARN=$(aws vpc-lattice get-service --service-identifier "$SVC_ID" --query arn --output text)
+TG_ID=$(aws vpc-lattice list-target-groups --query "items[?name=='net-lab-lattice-b'].id | [0]" --output text)
+echo "client=$CLIENT_ID dns=$DNS net=$SN_ID svc=$SVC_ID tg=$TG_ID"
+```
+> ⚠️ **VPC Reachability Analyzer does NOT help here.** It traces **L3/L4 ENI-to-ENI** paths; the Lattice
+> data plane is a **link-local L7 endpoint** injected by the association, and the analyzer cannot trace a
+> client → Lattice service → target path. It is only useful for the **client → its own ENI / egress** leg
+> (e.g. the SSM-management path). For the L7 service path, use the control-plane checks below, not `analyze()`.
+
+### Flow A — VPC association not ACTIVE (T1)
+```bash
+aws vpc-lattice list-service-network-vpc-associations --service-network-identifier "$SN_ID" \
+  --query 'items[].{vpc:vpcId,status:status}' --output table
+```
+Expect **2** rows, both `ACTIVE`. If a row is `CREATE_IN_PROGRESS` → wait ~1 min, re-run. If `CREATE_FAILED`
+or stuck → the **association SG** is the usual cause: the association's managed ENIs use the per-VPC SG and
+it must allow the HTTP data path. Fix the SG in `1-vpc/security.tf` (ingress HTTP:80 from the VPC CIDR) and
+the association's `security_group_ids` in `2-service-network/service-network.tf`. Fewer than 2 rows → the
+`for_each` over both VPCs didn't apply both — re-apply `2-service-network`.
+
+### Flow B — service not ACTIVE / not associated (T2)
+Walk the service top-down; each sub-check names the next thing to look at:
+```bash
+# 1) service itself ACTIVE?
+aws vpc-lattice get-service --service-identifier "$SVC_ID" --query 'status' --output text   # want ACTIVE
+# 2) attached to the network? (this is what publishes it to every associated VPC)
+aws vpc-lattice list-service-network-service-associations --service-network-identifier "$SN_ID" \
+  --query 'items[].{svc:serviceName,status:status}' --output table                           # want ACTIVE
+# 3) a listener exists on :80?
+aws vpc-lattice list-listeners --service-identifier "$SVC_ID" \
+  --query 'items[].{name:name,proto:protocol,port:port}' --output table                      # want HTTP/80
+# 4) target healthy?
+aws vpc-lattice list-targets --target-group-identifier "$TG_ID" \
+  --query 'items[].{id:id,status:status,reason:reasonCode}' --output table                   # want HEALTHY
+```
+Where to fix by sub-check:
+- **(2) no service↔network association** → add/verify `aws_vpclattice_service_network_service_association.this` in `3-service/service.tf`. Without it the service exists but no VPC can resolve it — curl in T3 will hang.
+- **(3) no listener** → `aws_vpclattice_listener.http` in `3-service/service.tf`. A service with no listener never goes fully serviceable.
+- **(4) target UNHEALTHY** → three usual causes: (a) the service EC2's `python3 -m http.server 80` isn't up yet — give user_data ~1 min, or SSM in (`aws ssm start-session --target $(cd 3-service && tofu output -raw service_instance_id)`) and check `/var/log/httpd.log`; (b) the health-check config (`path=/`, `port=80`, matcher `200`) in the `aws_vpclattice_target_group.this` `config.health_check` block (`3-service/service.tf`); (c) the **VPC-B instance SG** must admit the health check + data path — `1-vpc/security.tf` allows HTTP:80 from the VPC CIDR; if health checks still fail, widen it to also allow the **Lattice managed prefix** (`com.amazonaws.<region>.vpc-lattice`, via `aws ec2 describe-managed-prefix-lists`).
+
+### Flow C — curl fails (T3): hang / `000` / connection refused
+Walk the chain in this order — stop at the first that's wrong:
+1. **Client VPC associated?** → Flow A must be green for VPC A (the client's VPC), both ACTIVE.
+2. **DNS resolves on the client?** SSM in and resolve the name — it must return a **link-local** address:
+   ```bash
+   aws ssm start-session --target "$CLIENT_ID"
+     dig +short "$DNS"        # expect a 169.254.x.x link-local Lattice address (NOT a 10.x / public IP)
+     exit
+   ```
+   No answer / a 10.x address → the service isn't published to this VPC (Flow B step 2) or the VPC isn't associated (Flow A).
+3. **Target healthy?** → Flow B step 4. A resolving DNS + refused/000 connection = no healthy target behind the listener.
+4. **SGs on the data path** → client egress (`1-vpc/security.tf` egress is `-1`/all, so usually fine) **and** the VPC-B instance SG ingress HTTP:80 (Flow B (4c)). Both must allow the Lattice traffic.
+5. **403 instead of hang?** That's auth, not connectivity → Flow D. A plain `curl` only succeeds when the policy allows `Principal:"*"`; if `AWS_IAM` is enforcing SigV4, an unsigned curl returns 403.
+
+### Flow D — 403 (T4 / auth)
+```bash
+# per-service policy (most specific) and the network policy (backplane-wide):
+aws vpc-lattice get-auth-policy --resource-identifier "$SVC_ARN"   # service policy (3-service/service.tf)
+aws vpc-lattice get-auth-policy --resource-identifier "$SN_ARN"    # network policy (2-service-network/service-network.tf)
+```
+- A **plain (unsigned) `curl` works only if the effective policy allows `Principal:"*"`.** The base lab is allow-all on both the network (`aws_vpclattice_auth_policy.network`) and the service (`aws_vpclattice_auth_policy.service`). A 403 on the base lab = a policy got tightened (that's T4), or SigV4 is being enforced (see below).
+- Once you tighten the service policy to a specific `Principal` (role ARN), the caller **must SigV4-sign** the request — unsigned/anonymous is only matched by `Principal:"*"`:
+  ```bash
+  # from the client instance, creds from IMDS (instance role):
+  curl -s --aws-sigv4 "aws:amz:$AWS_REGION:vpc-lattice-svcs" \
+       --user "$AK:$SK" -H "x-amz-security-token: $TOKEN" "http://$DNS"
+  ```
+  Fix the principal in `aws_vpclattice_auth_policy.service` (`3-service/service.tf`): allowed principal → 200, other principal → 403. For T4 the **allowed** case needs the signed curl above, not a plain one.
+- ⚠️ **Built-blind (confirm on first apply):** whether a `Principal:"*"` service with `auth_type=AWS_IAM` accepts a **plain** curl, or still demands SigV4 even for anonymous. If a plain curl 403s on the allow-all base, `AWS_IAM` is enforcing SigV4 regardless of `Principal:"*"` — record which you observe.
+
+### Quick table (symptom → first move)
+| Symptom | First move |
 |---|---|
-| **curl fails** — `curl` hangs / `000` / no route to host (T3) | Service not attached to the network? Need `aws_vpclattice_service_network_service_association` (3-service) → verify in **T2**. VPC A association **Active** (2-service-network) → verify in **T1**. |
-| **curl fails** — resolves but connection refused / 000 (T3) | Target group target not **Healthy** — service EC2's `python3 -m http.server 80` up? SG in VPC B allows HTTP:80 to the instance (health check + data path)? Give user_data ~1 min. |
-| **service not Active** — service stuck not **ACTIVE** (T2) | Listener missing/misconfigured, or no healthy target in the TG. A service needs a listener + a reachable target to serve. `aws vpc-lattice get-service`. |
-| **VPC association not complete** — fewer than 2 / not ACTIVE (T1) | `aws_vpclattice_service_network_vpc_association` still creating, or the SG referenced doesn't allow the traffic. Associations can take ~1 min. Re-run T1. |
-| **auth 403** — 403 on curl (T3/T4) | Auth. Network `auth_type=AWS_IAM` + policy must Allow `vpc-lattice-svcs:Invoke`; same for the per-service policy. Base lab = allow-all (`Principal:"*"`) so an **unsigned** curl works. A 403 on the base lab means a policy got tightened (T4), **or** `AWS_IAM` requires **SigV4-signed** requests even with `Principal:"*"` (built-blind — see T3/T4 notes). For T4: an allowed `Principal` almost certainly needs a SigV4-signed curl, not a plain one. |
-| **SSM** — `start-session` fails / not in SSM (T0) | Agent needs ~1–2 min; host needs public IP + IGW route (`1-vpc`) and the `net-lab-lattice-ssm` profile. `aws ssm describe-instance-information`. |
-| `3-service`/`4-ec2` apply: remote state empty | Run earlier layers first (`./deploy.sh` does the order). |
+| `start-session` fails / client not in SSM (T0) | wait ~1–2 min; `aws ssm describe-instance-information`. Else check public IP + IGW route (`1-vpc`) and the `net-lab-lattice-ssm` profile (`3-service/ssm.tf`, reused via `instance_profile_name`). Plugin missing → `brew install --cask session-manager-plugin`. |
+| fewer than 2 / not-ACTIVE VPC associations (T1) | Flow A (association SG / still creating) |
+| service not ACTIVE / not associated (T2) | Flow B (service → network assoc → listener → target health) |
+| curl hangs / `000` / refused (T3) | Flow C (assoc → DNS link-local → target health → SG) |
+| curl returns **403** (T3/T4) | Flow D (auth policy; SigV4 when a specific `Principal` is set) |
+| L7 path "unreachable" but ENIs look fine | **Not** Reachability Analyzer — it can't trace the Lattice L7 path; use Flow B/C |
+| `3-service`/`4-ec2` apply: remote state empty | run earlier layers first (`./deploy.sh` does the order) |
 
 ## Test EC2 recipe (reused by every lab)
 Small, cheap, no SSH: `t4g.micro` + Amazon Linux 2023 (arm64) + `net-lab-lattice-ssm`
