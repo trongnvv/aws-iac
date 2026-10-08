@@ -190,31 +190,31 @@ def section2_html(steps, banners, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (from 1-vpc … 4-ec2 *.tf and README.md) ───────────────────────────────────────────────
+# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
 HEADER = ("AWS Network Lab 5 — VPC Peering vs TGW (non-transitive)",
           "hub A peers B and C (A↔B, A↔C) — but B ⊥ C: peering is non-transitive, so A will not relay "
           "across a second peering · the cheap few-VPC alternative to TGW · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "3 VPCs A/B/C · public subnet · IGW · RT · SG", "main"),
-    ("Peering", "2-peering/", "A↔B + A↔C (auto_accept) · routes A→B,A→C,B→A,C→A", "main"),
-    ("SSM", "3-ssm/", "IAM role + instance profile net-lab-peer-ssm", "main"),
-    ("EC2", "4-ec2/", "3 test hosts · t4g.micro · AL2023 arm64", "main"),
+    ("VPC", "1-vpc/", "3 VPCs A/B/C · Subnet · Internet Gateway · Route table · Security Group", "main"),
+    ("Peering", "2-peering/", "2 Peering Connections (A↔B, A↔C) + routes both ways", "main"),
+    ("SSM", "3-ssm/", "IAM role + instance profile (net-lab-peer-ssm)", "main"),
+    ("EC2", "4-ec2/", "3 EC2 instances · t4g.micro · Amazon Linux 2023", "main"),
 ]
 BANNERS = [
     ("Invariants:", [
-        "two peerings A↔B + A↔C — NEVER B↔C",
-        "routes both ways on A/B and A/C only",
+        "2 Peering Connections: A↔B + A↔C — NEVER B↔C",
+        "route both ways on A/B and A/C only",
         "peering is non-transitive (A won't relay B↔C)",
-        "SG: ICMP from 10.0.0.0/8",
+        "Security Group: ICMP from 10.0.0.0/8",
         "no SSH — SSM only",
         "peering has no hourly charge",
     ]),
 ]
 CHECKS = (("Verify", "via SSM sessions"), icon(SystemsManager), [
     ("T0", "describe-instance-information", "3 hosts Online", "mgmt"),
-    ("T1", "A → B", "ping 0% loss (A↔B peering)", "shared"),
-    ("T2", "A → C", "ping 0% loss (A↔C peering)", "shared"),
+    ("T1", "A → B", "ping 0% loss (peering A↔B)", "shared"),
+    ("T2", "A → C", "ping 0% loss (peering A↔C)", "shared"),
     ("T3", "B → A, C → A", "ping 0% loss (both sides routed)", "shared"),
     ("T4", "B → C", "100% loss (non-transitive)", "deny"),
     ("T5", "C → B", "100% loss (symmetric)", "deny"),
@@ -232,71 +232,86 @@ FOOTER = ("Cost & teardown", [
 OUT = os.path.splitext(os.path.basename(__file__))[0]
 graph_attr = dict(
     rankdir="LR", splines="ortho", newrank="true", bgcolor=CANVAS, pad="0.5", nodesep="0.35",
-    ranksep="0.9", fontname=FONT, label=header_html(icon(VPCPeering), *HEADER), labelloc="t",
+    ranksep="1.1", fontname=FONT, label=header_html(icon(VPCPeering), *HEADER), labelloc="t",
     labeljust="c", compound="true", outputorder="edgesfirst",
 )
 
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"),
              edge_attr=dict(fontname=FONT)):
-    # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=section_label(1, "AWS resources created & who reaches whom", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
-            # column 1 — spoke B
+            # column 1 — spoke B (AWS objects; title matches content)
             with group("VPC B · 10.1.0.0/16", "main"):
-                b_host = node(card("B test host", ["public 10.1.0.0/24 · t4g.micro",
-                                                   "RT 0/0 → IGW (SSM)", "RT 10.0/16 → pcx a-b"], "main",
-                                   icon(EC2Instance)))
-                b_rt = node(card("B route table", ["only peer route is to A"], "main", icon(RouteTable),
-                                 rows=[("10.0.0.0/16", "pcx a-b (→ A)", "main")]))
+                b_res = node(card("Subnet · EC2 · SG (B)", ["Subnet 10.1.0.0/24 (public)",
+                                                            "EC2 t4g.micro · Amazon Linux 2023",
+                                                            "Security Group: ICMP from 10/8"], "main",
+                                  icon(EC2Instance), width=320))
+                b_rt = node(card("Route table (B)", [], "main", icon(RouteTable), width=320,
+                                 rows=[("0.0.0.0/0", "→ Internet Gateway", "main"),
+                                       ("10.0.0.0/16", "→ Peering (to A)", "main")]))
 
-            # column 2 — hub A (peered to both B and C)
+            # column 2 — hub A: Peering Connections + A objects + A route table
             with group("VPC A · 10.0.0.0/16 · hub (peers both)", "hub"):
-                a_pcx = node(card("A peers B and C", ["2 peering connections (auto_accept)",
-                                                      "same account + region"], "hub", icon(VPCPeering),
-                                  width=330))
-                a_host = node(card("A test host", ["public 10.0.0.0/24 · t4g.micro",
-                                                   "RT 0/0 → IGW (SSM)", "reaches both B and C"], "hub",
-                                   icon(EC2Instance), width=330))
-                a_rt = node(card("A route table", ["learns BOTH peers (A is the hub)"], "hub",
-                                 icon(RouteTable), width=330,
-                                 rows=[("10.1.0.0/16", "pcx a-b (→ B)", "hub"),
-                                       ("10.2.0.0/16", "pcx a-c (→ C)", "hub")]))
+                a_pcx = node(card("VPC Peering Connection ×2", ["pcx a-b  (A ↔ B)",
+                                                                "pcx a-c  (A ↔ C)",
+                                                                "auto-accept · same account/region"], "hub",
+                                  icon(VPCPeering), width=360))
+                a_res = node(card("Subnet · EC2 · SG (A)", ["Subnet 10.0.0.0/24 (public) · EC2 t4g.micro",
+                                                            "Security Group: ICMP from 10/8",
+                                                            "reaches BOTH B and C"], "hub",
+                                  icon(EC2Instance), width=360))
+                a_rt = node(card("Route table (A)", [], "hub", icon(RouteTable), width=360,
+                                 rows=[("0.0.0.0/0", "→ Internet Gateway", "hub"),
+                                       ("10.1.0.0/16", "→ Peering pcx a-b (to B)", "hub"),
+                                       ("10.2.0.0/16", "→ Peering pcx a-c (to C)", "hub")]))
 
-            # column 3 — the non-transitive gap between B and C
-            with box("deny", dict(label="", style="invis", margin="4")):
-                deny = node(card("B ⊥ C · no peering, no route", [
-                    "non-transitive: A won't relay B↔C",
-                    "no third B↔C peering, no B→C / C→B route"],
-                    "deny", letter="✘", width=320))
-
-            # column 4 — spoke C
+            # column 3 — spoke C
             with group("VPC C · 10.2.0.0/16", "main"):
-                c_host = node(card("C test host", ["public 10.2.0.0/24 · t4g.micro",
-                                                   "RT 0/0 → IGW (SSM)", "RT 10.0/16 → pcx a-c"], "main",
-                                   icon(EC2Instance)))
-                c_rt = node(card("C route table", ["only peer route is to A"], "main", icon(RouteTable),
-                                 rows=[("10.0.0.0/16", "pcx a-c (→ A)", "main")]))
+                c_res = node(card("Subnet · EC2 · SG (C)", ["Subnet 10.2.0.0/24 (public)",
+                                                            "EC2 t4g.micro · Amazon Linux 2023",
+                                                            "Security Group: ICMP from 10/8"], "main",
+                                  icon(EC2Instance), width=320))
+                c_rt = node(card("Route table (C)", [], "main", icon(RouteTable), width=320,
+                                 rows=[("0.0.0.0/0", "→ Internet Gateway", "main"),
+                                       ("10.0.0.0/16", "→ Peering (to A)", "main")]))
 
-            # column 5 — management
+            # column 4 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 test hosts (A/B/C)", "no SSH, no key pair"],
                                 "mgmt", icon(SystemsManager), width=270))
-                role = node(card("net-lab-peer-ssm", ["IAM role + instance profile",
-                                                      "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                role = node(card("IAM role + instance profile", ["net-lab-peer-ssm",
+                                                                 "AmazonSSMManagedInstanceCore"], "mgmt",
+                                 icon(IAMRole), width=270))
 
-            # data path: B ↔ A ↔ C work (two peerings); B ⊥ C sits between them
-            flow(b_host, a_host, "main")
-            flow(a_host, c_host, "hub")
+            # column 5 — legend (colour key) + the "vs TGW" contrast the title promises
+            with group("Legend · Peering vs TGW", "main"):
+                legend = node(card("Legend", [], "main", letter="❖", width=300,
+                                   rows=[("reachable", "peering up  ✓", "shared"),
+                                         ("blocked", "no peering / no route  ✘", "deny"),
+                                         ("hub", "VPC A peers both", "hub"),
+                                         ("mgmt", "SSM / IAM", "mgmt")]))
+                vstgw = node(card("Peering vs TGW", ["TGW: transitive — B↔C relayed via the hub",
+                                                     "Peering: NOT transitive (this lab)",
+                                                     "rule: few VPCs → Peering · many → TGW"], "hub",
+                                  icon(VPCPeering), width=300))
 
-            a_host >> Edge(style="invis") >> ssm  # keeps Management as the last column
-            deny >> Edge(style="invis") >> ssm    # pin the deny card ahead of Management
-            # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
-            # so each list below is written top → bottom and wired in reverse.
-            for col in [[b_host, b_rt], [a_pcx, a_host, a_rt], [c_host, c_rt], [ssm, role]]:
+            # peering that EXISTS — solid green, ✓ verdict on the link
+            b_res >> Edge(label="  ✓ pcx a-b  ", color=ROLE["shared"][0], penwidth="2.4", fontname=BOLD,
+                          fontcolor=ROLE["shared"][0], dir="both") >> a_pcx
+            a_pcx >> Edge(label="  ✓ pcx a-c  ", color=ROLE["shared"][0], penwidth="2.4", fontname=BOLD,
+                          fontcolor=ROLE["shared"][0], dir="both") >> c_res
+            # non-transitive gap — dashed RED straight between B and C, ✘ verdict
+            b_res >> Edge(label=" ✘ no Peering Connection · no route (non-transitive) ",
+                          color=ROLE["deny"][0], style="dashed", penwidth="2.4", dir="both",
+                          fontname=BOLD, fontcolor=ROLE["deny"][0], constraint="false") >> c_res
+
+            a_res >> Edge(style="invis") >> ssm    # Management after the VPCs
+            role >> Edge(style="invis") >> legend  # Legend column last
+            # column ordering only (LR rank=same): write top→bottom, wire in reverse.
+            for col in [[b_res, b_rt], [a_pcx, a_res, a_rt], [c_res, c_rt], [ssm, role], [legend, vstgw]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper
