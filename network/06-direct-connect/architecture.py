@@ -2,6 +2,7 @@
 
 Run:  uv run --with diagrams python architecture.py   → architecture.png
 Content is data (cards / STEPS / BANNERS / CHECKS …); style lives in the helpers.
+AWS console names on every card (not Terraform names); ✓/✘ verdicts on the reachability edges.
 """
 import os
 from pathlib import Path
@@ -192,50 +193,50 @@ def section2_html(steps, banners, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (from 1-vpc … 6-ec2 *.tf, 3-dxgw/dxgw.tf, 5-strongswan/user_data.sh.tftpl and README.md) ─
+# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
 HEADER = ("AWS Network Lab 6 — Direct Connect → Transit Gateway",
-          "On-prem router (strongSwan + FRR) ↔ [Transit VIF = VPN transport stand-in] ↔ DX Gateway ↔ "
-          "association (allowed_prefixes) ↔ TGW ↔ aws VPC · the physical cross-connect is the one manual step "
-          "· ap-southeast-1")
+          "On-prem router (EC2 strongSwan) ↔ Transit VIF (physical — manual) ↔ Direct Connect Gateway ↔ "
+          "DX Gateway ↔ TGW association (allowed prefixes) ↔ Transit Gateway ↔ AWS VPC · a Site-to-Site VPN "
+          "stands in for the physical link · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "aws + onprem VPCs · subnet · IGW · SGs", "main"),
-    ("TGW", "2-tgw/", "TGW · aws attachment · main RT · route", "main"),
-    ("DX Gateway", "3-dxgw/", "dx_gateway + DXGW↔TGW assoc (allowed_prefixes)", "hub"),
-    ("VPN", "4-vpn/", "EIP · CGW · VPN (2 tunnels) — transport stand-in", "main"),
-    ("strongSwan", "5-strongswan/", "on-prem router · SSM role · route", "main"),
-    ("EC2", "6-ec2/", "2 test hosts (aws + onprem)", "main"),
+    ("VPC", "1-vpc/", "AWS + on-prem VPCs · Subnet · Internet Gateway · Security Group", "main"),
+    ("Transit Gateway", "2-tgw/", "Transit Gateway · VPC attachment · Route table · route", "main"),
+    ("Direct Connect Gateway", "3-dxgw/", "DX Gateway + DX Gateway ↔ TGW association (allowed prefixes)", "hub"),
+    ("Site-to-Site VPN", "4-vpn/", "Elastic IP · Customer Gateway · VPN (2 tunnels) — transport stand-in", "main"),
+    ("strongSwan", "5-strongswan/", "EC2 instance (strongSwan) · IAM role + instance profile · route", "main"),
+    ("EC2", "6-ec2/", "2 EC2 test instances (AWS + on-prem)", "main"),
 ]
 BANNERS = [
     ("Invariants:", [
-        "DX-as-code = dx_gateway + DXGW↔TGW association (allowed_prefixes = onprem CIDR)",
-        "data path = VPN stand-in (BGP), not static routes",
-        "TGW default RT assoc/prop disabled — one main RT",
-        "SGs: ICMP from 10.0.0.0/8 + 192.168.0.0/16 · no SSH — SSM only",
+        "DX-as-code = Direct Connect Gateway + DX Gateway ↔ TGW association (allowed prefixes = on-prem CIDR)",
+        "data path = Site-to-Site VPN stand-in (BGP), not static routes",
+        "Transit Gateway default RT assoc/prop disabled — one Route table",
+        "Security Group: ICMP from 10.0.0.0/8 + 192.168.0.0/16 · no SSH — SSM only",
     ]),
     ("⚠ Built blind — verify live:", [
-        "🖐 physical cross-connect + Transit VIF (BGP to DX Gateway) = manual partner step",
-        "DXGW↔TGW association = associated",
-        "swanctl loads both conns · VTI + fwmark",
+        "🖐 physical cross-connect + Transit VIF (BGP to Direct Connect Gateway) = manual partner step",
+        "DX Gateway ↔ TGW association = associated",
+        "swanctl loads both tunnels · VTI + fwmark",
         "BGP Established · ping both ways",
     ], "deny"),
 ]
 CHECKS = (("Verify", "via SSM + AWS CLI"), icon(SystemsManager), [
     ("T0", "describe-instance-information", "3 hosts Online", "mgmt"),
-    ("T1", "describe-direct-connect-gateway-associations", "DXGW↔TGW associated", "shared"),
+    ("T1", "describe-direct-connect-gateway-associations", "DX Gateway ↔ TGW associated", "shared"),
     ("T2", "describe-vpn-connections", "≥1 tunnel UP · AcceptedRouteCount ≥ 1", "shared"),
     ("T3", "vtysh show bgp summary", "Established · PfxRcd > 0", "shared"),
-    ("T4", "aws → onprem", "ping 0% loss", "shared"),
-    ("T5", "onprem → aws", "ping 0% loss", "shared"),
+    ("T4", "AWS → on-prem", "ping 0% loss", "shared"),
+    ("T5", "on-prem → AWS", "ping 0% loss", "shared"),
     ("T6", "search-transit-gateway-routes", "192.168.30.0/16 · propagated", "shared"),
-    ("M", "manual: request DX connection + Transit VIF", "BGP to DX Gateway (partner)", "opt"),
+    ("M", "manual: request DX connection + Transit VIF", "BGP to Direct Connect Gateway (partner)", "opt"),
     ("S", "stretch: VIF types · MACsec/VPN-over-DX · DX+VPN backup", "see README", "opt"),
 ])
 FOOTER = ("Cost & teardown", [
-    "VPN stand-in ≈ $0.05/h",
-    "TGW ≈ $0.05/attachment-h × 2 + data",
-    "DX Gateway + DXGW↔TGW association = no hourly charge (no port)",
-    "3× t4g.micro ≈ $0.025/h · EIP + public IPv4 ≈ $0.005/h × 4",
+    "Site-to-Site VPN stand-in ≈ $0.05/h",
+    "Transit Gateway ≈ $0.05/attachment-h × 2 + data",
+    "Direct Connect Gateway + DX Gateway ↔ TGW association = no hourly charge (no port)",
+    "3× t4g.micro ≈ $0.025/h · Elastic IP + public IPv4 ≈ $0.005/h × 4",
     "≈ $0.25/h → ./teardown.sh (VPN bills until 4-vpn destroyed)",
 ])
 
@@ -253,83 +254,104 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=section_label(1, "Topology & traffic flow — who reaches whom", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — simulated on-prem
             with group("“On-prem” VPC · 192.168.30.0/16 (simulated)", "opt"):
-                onprem = node(card("onprem test host", ["public 192.168.0.0/24 · t4g.micro",
-                                                        "RT 10.30/16 → strongSwan ENI",
-                                                        "RT 0/0 → IGW (SSM)"], "main", icon(EC2Instance)))
-                cgw_box = node(card("strongSwan + FRR router", [
-                    "t4g.micro · EIP · source_dest_check = false",
+                onprem = node(card("EC2 instance (on-prem test host)", ["Subnet 192.168.0.0/24 (public) · t4g.micro",
+                                                        "Route table: 10.30.0.0/16 → strongSwan ENI",
+                                                        "Route table: 0.0.0.0/0 → Internet Gateway (SSM)"], "main",
+                                   icon(EC2Instance)))
+                cgw_box = node(card("EC2 instance (strongSwan)", [
+                    "t4g.micro · Elastic IP · source/dest check off",
                     "IKEv2 · vti1 / vti2 (fwmark 100 / 200) · MTU 1419",
-                    "FRR BGP ASN 65000 · advertises 192.168.30/16",
+                    "FRR BGP ASN 65000 · advertises 192.168.30.0/16",
                     "⚠ real DX: this box is the Transit VIF BGP peer",
                 ], "opt", icon(EC2Instance), width=340))
 
-            # column 2 — the Transit VIF, stood in by a Site-to-Site VPN
-            with group("Transit VIF = Site-to-Site VPN stand-in · dynamic (BGP)", "shared"):
-                t1 = node(card("Tunnel 1", ["IPsec IKEv2 · own PSK + outside IP",
-                                            "inside /30 (169.254.x.x) · BGP to vgw",
-                                            "preferred path"], "shared", letter="1"))
-                t2 = node(card("Tunnel 2", ["IPsec IKEv2 · own PSK + outside IP",
-                                            "inside /30 (169.254.x.x) · BGP to vgw",
-                                            "backup (DPD 10s · BGP timers 10/30)"], "shared", letter="2"))
-                cgw = node(card("Customer Gateway", ["AWS record of the on-prem peer",
-                                                     "EIP from 4-vpn · BGP ASN 65000"], "shared",
-                                icon(VPCCustomerGateway)))
-                phys = node(card("🖐 physical cross-connect", ["partner / manual — NOT IaC",
+            # column 2 — the Transit VIF: a physical manual step, stood in by a Site-to-Site VPN
+            with group("Transit VIF (physical — manual) · Site-to-Site VPN stand-in (BGP)", "shared"):
+                phys = node(card("🖐 Transit VIF (physical — manual)", ["partner / manual — NOT IaC",
                                                                "request DX connection + Transit VIF",
-                                                               "BGP to the DX Gateway"], "deny", letter="M",
-                                 width=300))
+                                                               "BGP to the Direct Connect Gateway"], "deny",
+                                 letter="M", width=320))
+                t1 = node(card("Site-to-Site VPN · Tunnel 1", ["IPsec IKEv2 · own PSK + outside IP",
+                                            "inside /30 (169.254.x.x) · BGP to VGW",
+                                            "preferred path"], "shared", letter="1", width=320))
+                t2 = node(card("Site-to-Site VPN · Tunnel 2", ["IPsec IKEv2 · own PSK + outside IP",
+                                            "inside /30 (169.254.x.x) · BGP to VGW",
+                                            "backup (DPD 10s · BGP timers 10/30)"], "shared", letter="2",
+                                width=320))
+                cgw = node(card("Customer Gateway", ["AWS record of the on-prem peer",
+                                                     "Elastic IP · BGP ASN 65000"], "shared",
+                                icon(VPCCustomerGateway), width=320))
 
-            # column 3 — DX Gateway (the DX-as-code control plane)
-            with group("DX Gateway · global, logical (as-code half)", "hub"):
-                dxgw = node(card("DX Gateway", ["amazon-side ASN 64513",
+            # column 3 — Direct Connect Gateway (the DX-as-code control plane)
+            with group("Direct Connect Gateway · global, logical (as-code half)", "hub"):
+                dxgw = node(card("Direct Connect Gateway", ["amazon-side ASN 64513",
                                                 "a Transit VIF BGP-peers here"], "hub",
-                                 icon(DirectConnect), width=330))
-                assoc = node(card("DXGW ↔ TGW association", ["associated_gateway_id = TGW",
-                                                             "allowed_prefixes = [192.168.30/16]"], "hub",
-                                  icon(RouteTable), width=330,
-                                  rows=[("192.168.30.0/16", "allowed → TGW", "hub")]))
+                                 icon(DirectConnect), width=340))
+                assoc = node(card("DX Gateway ↔ TGW association", ["associated gateway = Transit Gateway",
+                                                             "allowed prefixes = [192.168.30.0/16]"], "hub",
+                                  icon(RouteTable), width=340,
+                                  rows=[("192.168.30.0/16", "allowed → Transit Gateway", "hub")]))
 
             # column 4 — transit gateway
             with group("Transit Gateway · default RT assoc/prop disabled", "hub"):
-                tgw = node(card("TGW", ["amazon-side ASN 64512", "vpn_ecmp_support = enable"], "hub",
-                                icon(TransitGateway), width=330))
-                main_rt = node(card("main RT", ["assoc: aws VPC, VPN, DXGW attachments"], "hub",
-                                    icon(RouteTable), width=330,
-                                    rows=[("10.30.0.0/16", "aws VPC · propagated", "hub"),
+                tgw = node(card("Transit Gateway", ["amazon-side ASN 64512", "VPN ECMP support = enable"], "hub",
+                                icon(TransitGateway), width=340))
+                main_rt = node(card("Route table (Transit Gateway)", ["assoc: AWS VPC, VPN, DXGW attachments"], "hub",
+                                    icon(RouteTable), width=340,
+                                    rows=[("10.30.0.0/16", "AWS VPC · propagated", "hub"),
                                           ("192.168.30.0/16", "VPN · propagated (BGP)", "hub")]))
 
             # column 5 — cloud VPC
-            with group("VPC aws · 10.30.0.0/16", "main"):
-                aws_host = node(card("aws test host", ["public 10.30.0.0/24 · t4g.micro",
-                                                       "RT 192.168.30/16 → TGW", "RT 0/0 → IGW (SSM)"], "main",
-                                     icon(EC2Instance)))
+            with group("VPC AWS · 10.30.0.0/16", "main"):
+                aws_host = node(card("EC2 instance (AWS test host)", ["Subnet 10.30.0.0/24 (public) · t4g.micro",
+                                                       "Route table: 192.168.30.0/16 → Transit Gateway",
+                                                       "Route table: 0.0.0.0/0 → Internet Gateway (SSM)"], "main",
+                                     icon(EC2Instance), width=330))
 
             # column 6 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 hosts: 2 test + strongSwan", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=270))
-                role = node(card("net-lab-dx-ssm", ["IAM role + instance profile",
+                                "mgmt", icon(SystemsManager), width=300))
+                role = node(card("IAM role + instance profile", ["net-lab-dx-ssm",
                                                     "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                                 width=300))
 
-            # data path: onprem host → router → Transit-VIF/VPN → DX Gateway → association → TGW → aws VPC
-            flow(onprem, cgw_box, "main")
+            # column 7 — legend (colour + verdict key)
+            with group("Legend", "main"):
+                legend = node(card("Legend", [], "main", letter="❖", width=300,
+                                   rows=[("reachable", "VPN transport up  ✓", "shared"),
+                                         ("blocked", "no route / no peer  ✘", "deny"),
+                                         ("hub", "DX Gateway · Transit Gateway", "hub"),
+                                         ("manual step", "🖐 physical Transit VIF", "deny"),
+                                         ("mgmt", "SSM / IAM", "mgmt")]))
+
+            # working data path (VPN stand-in): onprem host → strongSwan → Tunnels → DX Gateway → assoc → TGW → AWS VPC
+            onprem >> Edge(label="  ✓ reaches AWS  ", color=ROLE["main"][0], penwidth="2.0", fontname=BOLD,
+                           fontcolor=ROLE["main"][0]) >> cgw_box
             flow(cgw_box, t1, "shared")
             flow(cgw_box, t2, "shared", dashed=True)
-            flow(t1, dxgw, "shared")
+            t1 >> Edge(label="  ✓ BGP · tunnels UP  ", color=ROLE["shared"][0], penwidth="2.4", fontname=BOLD,
+                       fontcolor=ROLE["shared"][0]) >> dxgw
             flow(t2, dxgw, "shared", dashed=True)
-            flow(dxgw, assoc, "hub")
+            dxgw >> Edge(label="  ✓ DX Gateway ↔ TGW associated  ", color=ROLE["hub"][0], penwidth="2.4",
+                         fontname=BOLD, fontcolor=ROLE["hub"][0]) >> assoc
             flow(assoc, tgw, "hub")
-            flow(tgw, aws_host, "hub")
+            tgw >> Edge(label="  ✓ on-prem CIDR propagated  ", color=ROLE["hub"][0], penwidth="2.0",
+                        fontname=BOLD, fontcolor=ROLE["hub"][0]) >> aws_host
+            # the physical Transit VIF — dashed RED ⚠ manual step, distinct from the working VPN transport
+            cgw_box >> Edge(label=" ✘ physical cross-connect · Transit VIF — partner / manual, not IaC ",
+                            color=ROLE["deny"][0], style="dashed", penwidth="2.4", dir="both",
+                            fontname=BOLD, fontcolor=ROLE["deny"][0], constraint="false") >> dxgw
 
-            aws_host >> Edge(style="invis") >> ssm  # keeps Management as the last column
+            aws_host >> Edge(style="invis") >> ssm    # keeps Management after the VPCs
+            role >> Edge(style="invis") >> legend     # Legend column last
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
-            for col in [[onprem, cgw_box], [t1, t2, cgw, phys], [dxgw, assoc], [tgw, main_rt], [aws_host], [ssm, role]]:
+            for col in [[onprem, cgw_box], [phys, t1, t2, cgw], [dxgw, assoc], [tgw, main_rt], [aws_host], [ssm, role], [legend]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper

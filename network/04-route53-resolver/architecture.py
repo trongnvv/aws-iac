@@ -192,44 +192,46 @@ def section2_html(steps, banners, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (from 1-vpc … 4-ec2 *.tf, 3-onprem-dns/user_data.sh.tftpl and README.md) ──────────
+# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
 HEADER = ("AWS Network Lab 4 — Route 53 Resolver (two-way hybrid DNS)",
-          "aws VPC 10.20/16 ⇄ VPC peering ⇄ “on-prem” VPC 192.168/16 (dnsmasq) · outbound EP forwards "
-          "corp.local to on-prem · inbound EP + PHZ serve aws.internal to on-prem · ap-southeast-1")
+          "VPC (aws) 10.20/16 ⇄ VPC Peering Connection ⇄ “on-prem” VPC 192.168/16 (EC2 dnsmasq) · "
+          "outbound endpoint forwards corp.local to on-prem · inbound endpoint + Private Hosted Zone "
+          "serve aws.internal to on-prem · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "aws (2 AZ) + onprem VPCs · IGW/RT · peering + routes · SGs", "main"),
-    ("DNS", "2-dns/", "PHZ aws.internal · inbound + outbound EP · corp.local rule", "main"),
-    ("on-prem DNS", "3-onprem-dns/", "dnsmasq EC2 @192.168.0.53 · SSM role", "main"),
-    ("EC2", "4-ec2/", "2 test hosts (aws + onprem)", "main"),
+    ("VPC", "1-vpc/", "2 VPCs (aws 2-AZ + on-prem) · Internet Gateway · Route table · VPC Peering · Security Group", "main"),
+    ("Route 53 Resolver", "2-dns/", "Private Hosted Zone aws.internal · inbound + outbound endpoint · Resolver rule (corp.local)", "main"),
+    ("on-prem DNS", "3-onprem-dns/", "EC2 instance (dnsmasq) @192.168.0.53 · IAM role + instance profile", "main"),
+    ("EC2", "4-ec2/", "2 EC2 test instances (aws + on-prem)", "main"),
 ]
 BANNERS = [
     ("Invariants:", [
-        "two-way: outbound EP forwards corp.local · inbound EP + PHZ serve aws.internal",
-        "non-overlapping CIDRs (10.20 ⊥ 192.168) so peering routes the DNS packets",
+        "two-way: outbound endpoint forwards corp.local · inbound endpoint + Private Hosted Zone serve aws.internal",
+        "non-overlapping CIDRs (10.20 ⊥ 192.168) so the VPC Peering Connection routes the DNS packets",
         "on-prem DNS pinned static 192.168.0.53 (breaks the apply chicken-and-egg)",
-        "no SSH — SSM only",
+        "endpoints take ~5 min to reach OPERATIONAL",
+        "no SSH — Session Manager only",
     ]),
     ("⚠ Built blind — verify live:", [
-        "dnsmasq config (address= + server=/aws.internal/) unverified",
-        "resolver endpoints ~5 min to Operational",
-        "early dig before Operational → SERVFAIL",
-        "inbound IPs templated into layer 3",
+        "EC2 (dnsmasq) config (address= + server=/aws.internal/) unverified",
+        "Resolver endpoints ~5 min to OPERATIONAL",
+        "early dig before OPERATIONAL → SERVFAIL",
+        "inbound endpoint IPs templated into layer 3",
     ], "deny"),
 ]
-CHECKS = (("Verify", "via SSM + AWS CLI"), icon(SystemsManager), [
-    ("T0", "describe-instance-information", "3 hosts Online", "mgmt"),
-    ("T1", "list-resolver-endpoints", "both EP OPERATIONAL (~5 min)", "shared"),
+CHECKS = (("Verify", "via Session Manager + AWS CLI"), icon(SystemsManager), [
+    ("T0", "describe-instance-information", "3 instances Online", "mgmt"),
+    ("T1", "list-resolver-endpoints", "both endpoints OPERATIONAL (~5 min)", "shared"),
     ("T2", "systemctl status dnsmasq", "active (running) · corp-local.conf", "shared"),
-    ("T3", "aws: dig host1.corp.local", "→ 192.168.0.80 (outbound EP)", "shared"),
-    ("T4", "onprem: dig test.aws.internal", "→ 10.20.99.99 (inbound + PHZ)", "shared"),
+    ("T3", "aws: dig host1.corp.local", "→ 192.168.0.80 (outbound endpoint)", "shared"),
+    ("T4", "on-prem: dig test.aws.internal", "→ 10.20.99.99 (inbound + PHZ)", "shared"),
     ("S1", "stretch: reverse DNS (PTR)", "dig -x both ways resolve", "opt"),
 ])
 FOOTER = ("Cost & teardown", [
-    "resolver ENIs ≈ $0.125/ENI-h × 4 ≈ $0.50/h  ← the pricey one, destroy promptly",
-    "3× t4g.micro ≈ $0.075/h",
+    "Resolver endpoint ENIs ≈ $0.125/ENI-h × 4 ≈ $0.50/h  ← the pricey one, destroy promptly",
+    "3× EC2 t4g.micro ≈ $0.075/h",
     "3× public IPv4 ≈ $0.015/h",
-    "≈ $0.60/h → ./teardown.sh (destroy 2-dns to stop the resolver ENI bill)",
+    "≈ $0.60/h → ./teardown.sh (destroy 2-dns to stop the Resolver endpoint ENI bill)",
 ])
 
 # ── diagram ──────────────────────────────────────────────────────────────────────────────────────
@@ -246,77 +248,93 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=section_label(1, "AWS resources created & two-way DNS resolution", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
-            # column 1 — AWS VPC: resolver endpoints + PHZ + test host
-            with group("VPC aws · 10.20.0.0/16 · 2 AZs", "main"):
-                out_ep = node(card("Resolver OUTBOUND endpoint", [
-                    "2 ENIs (subnet a + b) · SG egress 53 → on-prem",
-                    "AWS→on-prem egress path for corp.local",
-                ], "shared", icon(VPCElasticNetworkInterface), width=330))
-                corp_rule = node(card("corp.local FORWARD rule", [
-                    "rule_type FORWARD → outbound EP",
-                    "target 192.168.0.53:53 · assoc aws VPC",
+            # column 1 — AWS VPC: Resolver endpoints + rule + PHZ + test host (AWS console names)
+            with group("VPC (aws) · 10.20.0.0/16 · 2 AZs", "main"):
+                aws_host = node(card("EC2 instance (aws test host)", [
+                    "Subnet 10.20.0.0/24 (public) · t4g.micro",
+                    "dig host1.corp.local", "Session Manager, no SSH"], "main",
+                                     icon(EC2Instance), width=330))
+                corp_rule = node(card("Resolver rule (forward corp.local)", [
+                    "rule type FORWARD → outbound endpoint",
+                    "target 192.168.0.53:53 · assoc VPC (aws)",
                 ], "shared", icon(Route53), width=330))
-                inb_ep = node(card("Resolver INBOUND endpoint", [
-                    "2 ENIs (subnet a + b) · SG ingress 53 from on-prem",
-                    "on-prem→AWS entry for aws.internal",
+                out_ep = node(card("Route 53 Resolver outbound endpoint", [
+                    "2 ENIs (subnet a + b) · Security Group egress 53 → on-prem",
+                    "AWS → on-prem egress path for corp.local",
                 ], "shared", icon(VPCElasticNetworkInterface), width=330))
-                phz = node(card("PHZ aws.internal", [
-                    "private hosted zone · assoc aws VPC",
-                    "test.aws.internal A → 10.20.99.99",
+                inb_ep = node(card("Route 53 Resolver inbound endpoint", [
+                    "2 ENIs (subnet a + b) · Security Group ingress 53 from on-prem",
+                    "on-prem → AWS entry for aws.internal",
+                ], "shared", icon(VPCElasticNetworkInterface), width=330))
+                phz = node(card("Private Hosted Zone (aws.internal)", [
+                    "associated to VPC (aws)",
+                    "test.aws.internal  A → 10.20.99.99",
                 ], "hub", icon(Route53HostedZone), width=330))
-                aws_host = node(card("aws test host", ["public 10.20.0.0/24 · t4g.micro",
-                                                       "dig host1.corp.local", "SSM, no SSH"], "main",
-                                     icon(EC2Instance)))
 
-            # column 2 — the peering link that carries the DNS packets
-            with group("VPC Peering · aws ↔ on-prem", "hub"):
-                pcx = node(card("VPC peering", [
+            # column 2 — the VPC Peering Connection that carries the DNS packets
+            with group("VPC Peering Connection · aws ↔ on-prem", "hub"):
+                pcx = node(card("VPC Peering Connection", [
                     "non-overlapping CIDRs 10.20 ⊥ 192.168",
-                    "RT aws: 192.168/16 → pcx",
-                    "RT onprem: 10.20/16 → pcx",
+                    "Route table (aws): 192.168/16 → pcx",
+                    "Route table (on-prem): 10.20/16 → pcx",
                     "carries forwarded DNS packets",
                 ], "hub", icon(VPCPeering), width=300))
 
             # column 3 — simulated on-prem VPC: dnsmasq + test host
             with group("“On-prem” VPC · 192.168.0.0/16 (simulated)", "opt"):
-                dns = node(card("dnsmasq DNS server", [
+                dns = node(card("EC2 instance (dnsmasq)", [
                     "static 192.168.0.53 · t4g.micro",
                     "authoritative corp.local (host1 → .80)",
-                    "forwards aws.internal → inbound EP IPs",
-                    "owns shared SSM role",
+                    "forwards aws.internal → inbound endpoint IPs",
+                    "owns the shared IAM role",
                 ], "opt", icon(EC2Instance), width=330))
-                onprem_host = node(card("onprem test host", ["public 192.168.0.0/24 · t4g.micro",
-                                                             "resolv.conf → 192.168.0.53",
-                                                             "dig test.aws.internal"], "main",
-                                        icon(EC2Instance)))
+                onprem_host = node(card("EC2 instance (on-prem test host)", [
+                    "Subnet 192.168.0.0/24 (public) · t4g.micro",
+                    "resolv.conf → 192.168.0.53",
+                    "dig test.aws.internal"], "main",
+                                        icon(EC2Instance), width=330))
 
             # column 4 — management
             with group("Management", "mgmt"):
-                ssm = node(card("SSM Session Manager", ["3 hosts: 2 test + dnsmasq", "no SSH, no key pair"],
+                ssm = node(card("Session Manager", ["3 instances: 2 test + dnsmasq", "no SSH, no key pair"],
                                 "mgmt", icon(SystemsManager), width=270))
-                role = node(card("net-lab-r53-ssm", ["IAM role + instance profile",
-                                                     "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                role = node(card("IAM role + instance profile", ["net-lab-r53-ssm",
+                                                                 "AmazonSSMManagedInstanceCore"], "mgmt",
+                                 icon(IAMRole), width=270))
 
-            # AWS → on-prem (corp.local): host → rule → outbound EP → peering → dnsmasq
+            # column 5 — legend (colour key)
+            with group("Legend", "main"):
+                legend = node(card("Legend", [], "main", letter="❖", width=300,
+                                   rows=[("resolve ok", "endpoint OPERATIONAL  ✓", "shared"),
+                                         ("fail", "early dig / SERVFAIL  ✘", "deny"),
+                                         ("aws", "VPC (aws) resources", "main"),
+                                         ("on-prem", "simulated VPC (dnsmasq)", "opt"),
+                                         ("mgmt", "Session Manager / IAM", "mgmt")]))
+
+            # AWS → on-prem (corp.local): host → rule → outbound endpoint → peering → dnsmasq
+            # ✓ working: dig host1.corp.local resolves via the outbound endpoint
             flow(aws_host, corp_rule, "main")
             flow(corp_rule, out_ep, "shared")
-            flow(out_ep, pcx, "shared")
+            out_ep >> Edge(label="  ✓ AWS→on-prem · dig host1.corp.local  ", color=ROLE["shared"][0],
+                           penwidth="2.4", fontname=BOLD, fontcolor=ROLE["shared"][0]) >> pcx
             flow(pcx, dns, "shared")
-            # on-prem → AWS (aws.internal): dnsmasq → peering → inbound EP → PHZ
+            # on-prem → AWS (aws.internal): dnsmasq → peering → inbound endpoint → PHZ
+            # ✓ working: dig test.aws.internal resolves via the inbound endpoint → PHZ
             flow(dns, pcx, "main", dashed=True)
-            flow(pcx, inb_ep, "main", dashed=True)
+            pcx >> Edge(label="  ✓ on-prem→AWS · dig test.aws.internal  ", color=ROLE["shared"][0],
+                        penwidth="2.4", fontname=BOLD, fontcolor=ROLE["shared"][0], style="dashed") >> inb_ep
             flow(inb_ep, phz, "hub", dashed=True)
             # onprem test host asks dnsmasq
             flow(onprem_host, dns, "main", constraint=False)
 
-            dns >> Edge(style="invis") >> ssm  # keeps Management as the last column
+            dns >> Edge(style="invis") >> ssm     # keeps Management after the VPCs
+            role >> Edge(style="invis") >> legend  # Legend column last
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
-            for col in [[out_ep, corp_rule, inb_ep, phz, aws_host], [pcx],
-                        [dns, onprem_host], [ssm, role]]:
+            for col in [[aws_host, corp_rule, out_ep, inb_ep, phz], [pcx],
+                        [dns, onprem_host], [ssm, role], [legend]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper

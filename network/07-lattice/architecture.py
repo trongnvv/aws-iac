@@ -190,17 +190,17 @@ def section2_html(steps, banners, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (from 1-vpc … 4-ec2 *.tf, 3-service/service.tf user_data and README.md) ─────────────
+# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
 HEADER = ("AWS Network Lab 7 — VPC Lattice (L7 service mesh · not routing)",
           "No route tables, no CIDR planning — overlapping 10.0.0.0/16 is fine. The client reaches the "
           "service by its Lattice DNS name (resolves to link-local 169.254.x), through the service network, "
           "gated by IAM auth. This replaces peering/TGW at L7. ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "VPC A + B · both 10.0.0.0/16 (overlap) · IGW · SG", "main"),
-    ("Service network", "2-service-network/", "net (AWS_IAM) · allow-all policy · assoc both VPCs", "main"),
-    ("Service", "3-service/", "SSM role · svc EC2 (B) · TG · listener · svc↔net", "main"),
-    ("EC2", "4-ec2/", "client EC2 in A · curls the Lattice DNS name", "main"),
+    ("VPC", "1-vpc/", "VPC A + B · both 10.0.0.0/16 (overlap) · Internet Gateway · Security Group", "main"),
+    ("Service Network", "2-service-network/", "Service Network (AWS_IAM) · IAM auth policy · associate both VPCs", "main"),
+    ("Service", "3-service/", "IAM role + instance profile · service EC2 (B) · Target group · Listener · assoc", "main"),
+    ("EC2", "4-ec2/", "client EC2 in A · curls the Lattice Service DNS name", "main"),
 ]
 BANNERS = [
     ("What makes it different:", [
@@ -208,22 +208,22 @@ BANNERS = [
         "reach a service by its DNS name → link-local 169.254.x (not a route)",
         "overlapping 10.0.0.0/16 is irrelevant",
         "IAM auth is the gate (allow-all base → 403 / 200)",
-        "one service network associates BOTH VPCs · no SSH (SSM only)",
+        "one Service Network associates BOTH VPCs · no SSH (SSM only)",
     ]),
     ("⚠ Built blind — verify live:", [
-        "aws_vpclattice_* args confirm on apply",
-        "plain curl works with Principal:\"*\" or SigV4 enforced?",
-        "TG config/health_check nesting + casing",
-        "dns_entry[0].domain_name is the DNS attr",
-        "VPC-side SG may need the Lattice managed prefix",
+        "Lattice service/target-group args confirm on apply",
+        "plain curl works with Principal:\"*\" or is SigV4 enforced?",
+        "target-group health-check nesting + casing",
+        "Service DNS name is the computed dns_entry attribute",
+        "VPC-side SG already allows the Lattice managed prefix (fixed in IaC)",
     ], "deny"),
 ]
 CHECKS = (("Verify", "via SSM + AWS CLI"), icon(SystemsManager), [
-    ("T0", "describe-instance-information", "client (VPC A) Online", "mgmt"),
-    ("T1", "list-service-network-vpc-associations", "2 assoc · both ACTIVE", "shared"),
-    ("T2", "get-service + svc↔net assoc", "service ACTIVE + associated · target HEALTHY", "shared"),
+    ("T0", "SSM describe-instance-information", "client (VPC A) Online", "mgmt"),
+    ("T1", "Service Network VPC associations", "2 assoc · both ACTIVE", "shared"),
+    ("T2", "Lattice Service + assoc + target", "service ACTIVE + associated · target HEALTHY", "shared"),
     ("T3", "client A → curl http://$DNS", "reaches B across 10.0/16 overlap · no peering/TGW", "shared"),
-    ("T4", "tighten per-service auth policy", "unauthorized → 403", "deny"),
+    ("T4", "tighten per-service IAM auth policy", "unauthorized → 403", "deny"),
     ("T4", "widen back to allowed principal", "allowed → 200 (SigV4)", "opt"),
 ])
 FOOTER = ("Cost & teardown", [
@@ -246,47 +246,47 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
              edge_attr=dict(fontname=FONT)):
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "L7 reach: DNS name + IAM gate (no routing)", W - 16),
+        with box("section1", dict(label=section_label(1, "L7 reach: Service DNS + IAM gate (no routing)", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — VPC A (client)
             with group("VPC A · 10.0.0.0/16 · client", "main"):
-                client = node(card("client test host", ["public 10.0.0.0/24 · t4g.micro",
-                                                        "SSM in → curl http://<lattice DNS>",
-                                                        "NO route to B — only the DNS name reaches it"], "main",
+                client = node(card("EC2 instance (client)", ["Subnet 10.0.0.0/24 (public) · t4g.micro",
+                                                             "SSM in → curl http://<Service DNS>",
+                                                             "NO route to B — only the DNS name reaches it"], "main",
                                    icon(EC2Instance), width=340))
-                a_assoc = node(card("VPC A association", ["network injects a resolver + a",
-                                                          "link-local data path into VPC A",
-                                                          "assoc SG allows HTTP:80"], "main",
+                a_assoc = node(card("VPC association (A)", ["Service Network injects a resolver +",
+                                                            "link-local data path into VPC A",
+                                                            "Security Group allows HTTP:80"], "main",
                                     icon(PublicSubnet), width=340))
 
             # column 2 — the service network = the connectivity (DNS + IAM gate), the hero
             with group("Service Network · this IS the connectivity (L7)", "hub"):
-                dns = node(card("① Lattice DNS name", [
+                dns = node(card("① Service DNS name", [
                     "svc-b-….vpc-lattice-svcs.<region>.on.aws",
                     "resolves to link-local 169.254.x.x",
                     "NOT an L3 route → overlap 10.0/16 OK"], "shared", letter="⬡", width=380))
-                net = node(card("② Service Network", ["net-lab-lattice · auth_type AWS_IAM",
+                net = node(card("② Service Network", ["auth type AWS_IAM",
                                                       "associates BOTH VPC A + VPC B",
                                                       "replaces peering/TGW routing"], "hub",
                                 letter="L", width=380))
-                gate = node(card("③ IAM auth gate", ["network + per-service auth policy",
-                                                     "allow-all base (Principal \"*\")",
-                                                     "tighten → unauthorized 403 · allowed 200 (SigV4)"], "deny",
+                gate = node(card("③ IAM auth policy", ["network + per-service auth policy",
+                                                       "allow-all base (Principal \"*\")",
+                                                       "allowed 200 · unauthorized 403 (SigV4)"], "deny",
                                  icon(IAMPermissions), width=380))
 
             # column 3 — VPC B (the service, same CIDR)
             with group("VPC B · 10.0.0.0/16 · SAME CIDR · service", "main"):
-                svc = node(card("Lattice Service B", ["svc↔network association publishes it",
-                                                      "dns_entry[0].domain_name",
-                                                      "listener HTTP:80 → target group"], "shared",
+                svc = node(card("Lattice Service", ["VPC association publishes it",
+                                                    "Service DNS name (dns_entry)",
+                                                    "Listener (HTTP:80) → target group"], "shared",
                                 letter="L", width=340))
-                tg = node(card("target group → service", ["INSTANCE · :80 · health 200",
-                                                          "service EC2: python3 http.server 80",
-                                                          "'hello from service B … 10.0.0.0/16'"], "main",
+                tg = node(card("Target group → EC2 instance", ["INSTANCE · :80 · health 200",
+                                                               "service EC2: python3 http.server 80",
+                                                               "'hello from service B … 10.0.0.0/16'"], "main",
                                 icon(EC2Instance), width=340))
-                b_assoc = node(card("VPC B association", ["injects resolver + link-local path",
-                                                          "assoc SG allows HTTP:80"], "main",
+                b_assoc = node(card("VPC association (B)", ["injects resolver + link-local path",
+                                                            "Security Group allows HTTP:80"], "main",
                                     icon(PublicSubnet), width=340))
 
             # column 4 — management
@@ -294,22 +294,35 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                 ssm = node(card("SSM Session Manager", ["2 hosts: client (A) + service (B)",
                                                         "no SSH, no key pair"], "mgmt",
                                 icon(SystemsManager), width=270))
-                role = node(card("net-lab-lattice-ssm", ["IAM role + instance profile",
-                                                         "created in 3-service, reused by 4-ec2",
-                                                         "AmazonSSMManagedInstanceCore"], "mgmt",
+                role = node(card("IAM role + instance profile", ["net-lab-lattice-ssm",
+                                                                 "created in 3-service, reused by 4-ec2",
+                                                                 "AmazonSSMManagedInstanceCore"], "mgmt",
                                  icon(IAMRole), width=270))
+
+            # column 5 — legend (colour key)
+            with group("Legend", "main"):
+                legend = node(card("Legend", [], "main", letter="❖", width=280,
+                                   rows=[("reachable", "L7 call succeeds  ✓", "shared"),
+                                         ("blocked", "unauthorized  403  ✘", "deny"),
+                                         ("network", "Service Network (hub)", "hub"),
+                                         ("service", "Lattice Service / DNS", "main"),
+                                         ("mgmt", "SSM / IAM", "mgmt")]))
 
             # data path: client → ① DNS (link-local) → ② network → ③ IAM gate → service B
             flow(client, a_assoc, "main")
-            flow(a_assoc, dns, "shared")
+            a_assoc >> Edge(label="  ✓ reaches across the overlapping 10.0.0.0/16 (L7, no routing)  ",
+                            color=ROLE["shared"][0], penwidth="2.4", fontname=BOLD,
+                            fontcolor=ROLE["shared"][0], arrowsize="0.8") >> dns
             flow(dns, net, "hub")
-            flow(net, gate, "deny")
+            net >> Edge(label="  ✓ allowed 200  ·  ✘ unauthorized 403  ", color=ROLE["deny"][0],
+                        penwidth="2.4", fontname=BOLD, fontcolor=ROLE["deny"][0], arrowsize="0.8") >> gate
             flow(gate, svc, "shared")
             flow(svc, tg, "main")
             flow(b_assoc, net, "main", dashed=True)  # VPC B associated to the same network
 
             service_ec2_last = tg
-            service_ec2_last >> Edge(style="invis") >> ssm  # keeps Management last
-            for col in [[client, a_assoc], [dns, net, gate], [svc, tg, b_assoc], [ssm, role]]:
+            service_ec2_last >> Edge(style="invis") >> ssm  # keeps Management before Legend
+            role >> Edge(style="invis") >> legend  # Legend column last
+            for col in [[client, a_assoc], [dns, net, gate], [svc, tg, b_assoc], [ssm, role], [legend]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper

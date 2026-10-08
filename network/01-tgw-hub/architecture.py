@@ -194,22 +194,22 @@ def section2_html(steps, rules, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (from 1-vpc … 5-egress *.tf and README.md) ──────────────────────────────────────────
+# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
 HEADER = ("AWS Network Lab 1 — Transit Gateway Hub & Segmentation",
           "3 VPCs (shared hub · prod · dev) through one Transit Gateway; prod ⊥ dev enforced by two TGW route "
-          "tables; optional centralized egress via one NAT in shared · ap-southeast-1")
+          "tables; optional centralized egress via one NAT Gateway in shared · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "3 VPCs · public subnet · IGW · RT · SG", "main"),
-    ("TGW", "2-tgw/", "TGW · 3 attachments · 2 RTs · 10/8 routes", "main"),
-    ("SSM", "3-ssm/", "IAM role + instance profile", "main"),
-    ("EC2", "4-ec2/", "3 test hosts · t4g.micro · AL2023", "main"),
-    ("Egress", "5-egress/  optional", "NAT + spoke private subnets", "opt"),
+    ("VPC", "1-vpc/", "3 VPCs · Subnet · Internet Gateway · Route table · Security Group", "main"),
+    ("TGW", "2-tgw/", "Transit Gateway · 3 attachments · 2 TGW route tables · 10/8 routes", "main"),
+    ("SSM", "3-ssm/", "IAM role + instance profile (net-lab-ssm)", "main"),
+    ("EC2", "4-ec2/", "3 EC2 instances · t4g.micro · Amazon Linux 2023", "main"),
+    ("Egress", "5-egress/  optional", "NAT Gateway + spoke private Subnets", "opt"),
 ]
 RULES = ("Invariants:", [
-    "TGW default RT association + propagation disabled",
-    "prod ⊥ dev: spoke-rt learns shared only",
-    "SG: ICMP from 10.0.0.0/8",
+    "Transit Gateway default RT association + propagation disabled",
+    "prod ⊥ dev: TGW spoke route table learns shared only",
+    "Security Group: ICMP from 10.0.0.0/8",
     "no SSH — SSM only",
     "egress off by default (enable_egress=false)",
 ])
@@ -219,11 +219,11 @@ CHECKS = (("Verify", "via SSM sessions"), icon(SystemsManager), [
     ("T2", "prod → shared, dev → shared", "ping 0% loss", "shared"),
     ("T3", "prod → dev", "100% loss (by design)", "deny"),
     ("T4", "dev → prod", "100% loss (symmetric)", "deny"),
-    ("T5", "spoke-rt routes", "only 10.0.0.0/16 · shared-rt = prod + dev", "shared"),
-    ("T6", "spoke-private → curl checkip", "IP == NAT EIP (egress on)", "opt"),
+    ("T5", "TGW route tables", "spoke = 10.0.0.0/16 only · shared = prod + dev", "shared"),
+    ("T6", "spoke-private → curl checkip", "IP == NAT Gateway EIP (egress on)", "opt"),
 ])
 FOOTER = ("Cost & teardown", [
-    "TGW ≈ $0.05/attachment-h × 3 + data",
+    "Transit Gateway ≈ $0.05/attachment-h × 3 + data",
     "3× t4g.micro ≈ $0.025/h",
     "3× public IPv4 ≈ $0.015/h",
     "≈ $0.19/h → ./teardown.sh when done",
@@ -242,71 +242,97 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, RULES, CHECKS), labelloc="b",
                                      labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=section_label(1, "AWS resources created & who reaches whom", W - 16),
                                          labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                          bgcolor=PANEL, margin="22")):
-            # column 1 — spokes
+            # column 1 — spoke VPCs (AWS objects; titles match content)
             with group("Spoke VPCs · segmented", "main"):
-                # note: graphviz picks the vertical order of sibling clusters itself (prod/dev/⊥ not pinned)
+                # note: graphviz picks the vertical order of sibling clusters itself (prod/dev not pinned)
                 with group("VPC dev · 10.2.0.0/16", "main", style="rounded", bgcolor="white", margin="10"):
-                    dev = node(card("dev", ["public 10.2.0.0/24 · t4g.micro", "RT 0/0 → IGW · 10/8 → TGW"],
-                                    "main", icon(EC2Instance)))
-                    dev_p = node(card("dev-private", ["private 10.2.100.0/24 · no public IP",
-                                                      "RT 0/0 → TGW"], "opt", icon(EC2Instance),
-                                      tagged="OPTIONAL"))
+                    dev = node(card("Subnet · EC2 · SG (dev)",
+                                    ["Subnet 10.2.0.0/24 (public) · EC2 t4g.micro",
+                                     "Security Group: ICMP from 10/8",
+                                     "Route table: 0/0 → Internet Gateway · 10/8 → TGW"],
+                                    "main", icon(EC2Instance), width=340))
+                    dev_p = node(card("Private Subnet · EC2 (dev)",
+                                      ["Subnet 10.2.100.0/24 (private) · no public IP",
+                                       "Route table: 0/0 → Transit Gateway"], "opt", icon(EC2Instance),
+                                      tagged="OPTIONAL", width=340))
 
-                with box("deny", dict(label="", style="invis", margin="4")):
-                    deny = node(card("prod ⊥ dev · no route", ["spoke-rt has no prod/dev propagation"],
-                                     "deny", letter="✘", width=300))
                 with group("VPC prod · 10.1.0.0/16", "main", style="rounded", bgcolor="white", margin="10"):
-                    prod = node(card("prod", ["public 10.1.0.0/24 · t4g.micro", "RT 0/0 → IGW · 10/8 → TGW"],
-                                     "main", icon(EC2Instance)))
-                    prod_p = node(card("prod-private", ["private 10.1.100.0/24 · no public IP",
-                                                        "RT 0/0 → TGW"], "opt", icon(EC2Instance),
-                                       tagged="OPTIONAL"))
-            # column 2 — transit gateway
+                    prod = node(card("Subnet · EC2 · SG (prod)",
+                                     ["Subnet 10.1.0.0/24 (public) · EC2 t4g.micro",
+                                      "Security Group: ICMP from 10/8",
+                                      "Route table: 0/0 → Internet Gateway · 10/8 → TGW"],
+                                     "main", icon(EC2Instance), width=340))
+                    prod_p = node(card("Private Subnet · EC2 (prod)",
+                                       ["Subnet 10.1.100.0/24 (private) · no public IP",
+                                        "Route table: 0/0 → Transit Gateway"], "opt", icon(EC2Instance),
+                                       tagged="OPTIONAL", width=340))
+            # column 2 — transit gateway + its route tables
             with group("Transit Gateway · default RT assoc/prop disabled", "hub"):
-                tgw = node(card("TGW hub", ["one VPC attachment per VPC",
-                                            "spokes attach in public subnet"], "hub", icon(TransitGateway),
-                                width=330))
-                spoke_rt = node(card("spoke-rt", ["assoc: prod, dev"], "hub", icon(RouteTable), width=330,
-                                     rows=[("10.0.0.0/16", "shared · propagated", "hub"),
-                                           ("0.0.0.0/0", "shared · static (egress)", "opt")]))
-                shared_rt = node(card("shared-rt", ["assoc: shared"], "hub", icon(RouteTable), width=330,
-                                      rows=[("10.1.0.0/16", "prod · propagated", "hub"),
-                                            ("10.2.0.0/16", "dev · propagated", "hub")]))
+                tgw = node(card("Transit Gateway", ["one VPC attachment per VPC",
+                                                    "spokes attach in public Subnet"], "hub",
+                                icon(TransitGateway), width=340))
+                spoke_rt = node(card("TGW route table (spoke)", ["assoc: prod, dev"], "hub",
+                                     icon(RouteTable), width=340,
+                                     rows=[("10.0.0.0/16", "→ shared · propagated", "hub"),
+                                           ("0.0.0.0/0", "→ shared · static (egress)", "opt")]))
+                shared_rt = node(card("TGW route table (shared)", ["assoc: shared"], "hub",
+                                      icon(RouteTable), width=340,
+                                      rows=[("10.1.0.0/16", "→ prod · propagated", "hub"),
+                                            ("10.2.0.0/16", "→ dev · propagated", "hub")]))
 
             # column 3 — shared hub VPC
             with group("VPC shared · 10.0.0.0/16 · hub", "shared"):
-                tgw_sub = node(card("TGW subnet", ["10.0.255.0/24 · shared attachment",
-                                                   "RT 0/0 → NAT (egress)"], "shared",
-                                    icon(TransitGatewayAttachment)))
-                shared = node(card("shared", ["public 10.0.0.0/24 · t4g.micro", "RT 0/0 → IGW · 10/8 → TGW",
-                                              "reaches prod + dev"], "shared", icon(EC2Instance)))
-                nat = node(card("NAT Gateway", ["in public 10.0.0.0/24 + EIP", "one egress for all spokes"],
-                                "opt", icon(NATGateway), tagged="OPTIONAL"))
+                tgw_sub = node(card("TGW attachment Subnet", ["Subnet 10.0.255.0/24 · shared attachment",
+                                                              "Route table: 0/0 → NAT Gateway (egress)"],
+                                    "shared", icon(TransitGatewayAttachment), width=330))
+                shared = node(card("Subnet · EC2 · SG (shared)",
+                                   ["Subnet 10.0.0.0/24 (public) · EC2 t4g.micro",
+                                    "Route table: 0/0 → Internet Gateway · 10/8 → TGW",
+                                    "reaches prod + dev"], "shared", icon(EC2Instance), width=330))
+                nat = node(card("NAT Gateway", ["in public Subnet 10.0.0.0/24 + EIP",
+                                                "one egress for all spokes"],
+                                "opt", icon(NATGateway), tagged="OPTIONAL", width=330))
 
-            # column 4 — internet
+            # column 4 — internet edge
             with group("Internet · external", "opt"):
-                igw = node(card("Internet Gateway", ["shared VPC (each VPC has one", "for SSM via public IP)"],
+                igw = node(card("Internet Gateway", ["one per VPC (SSM via public IP)",
+                                                     "shared VPC egress edge"],
                                 "opt", icon(InternetGateway), width=260))
-                inet = node(card("Internet", ["checkip.amazonaws.com", "sees the NAT EIP"], "opt",
+                inet = node(card("Internet", ["checkip.amazonaws.com", "sees the NAT Gateway EIP"], "opt",
                                  icon(InternetAlt1), width=260))
 
             # column 5 — management
             with group("Management", "mgmt"):
-                ssm = node(card("SSM Session Manager", ["test access to all hosts", "no SSH, no key pair"],
+                ssm = node(card("SSM Session Manager", ["test access to all 3 hosts", "no SSH, no key pair"],
                                 "mgmt", icon(SystemsManager), width=270))
-                role = node(card("net-lab-ssm", ["IAM role + instance profile",
-                                                 "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                role = node(card("IAM role + instance profile", ["net-lab-ssm",
+                                                                 "AmazonSSMManagedInstanceCore"], "mgmt",
+                                 icon(IAMRole), width=270))
 
-            # main path: spokes ↔ hub (10/8 → TGW)
-            flow(prod, tgw, "main")
-            flow(dev, tgw, "main")
+            # column 6 — legend (colour key)
+            with group("Legend", "main"):
+                legend = node(card("Legend", [], "main", letter="❖", width=280,
+                                   rows=[("reachable", "TGW route present  ✓", "shared"),
+                                         ("blocked", "no route · segmented  ✘", "deny"),
+                                         ("hub", "Transit Gateway", "hub"),
+                                         ("egress", "optional · NAT Gateway", "opt"),
+                                         ("mgmt", "SSM / IAM", "mgmt")]))
+
+            # reachable: spokes ↔ hub (10/8 → TGW → shared) — solid, ✓ verdict on the links
+            prod >> Edge(label="  ✓ shared ↔ prod  ", color=ROLE["shared"][0], penwidth="2.4",
+                         fontname=BOLD, fontcolor=ROLE["shared"][0], dir="both") >> tgw
+            dev >> Edge(label="  ✓ shared ↔ dev  ", color=ROLE["shared"][0], penwidth="2.4",
+                        fontname=BOLD, fontcolor=ROLE["shared"][0], dir="both") >> tgw
             flow(tgw, tgw_sub, "hub")
             flow(tgw_sub, shared, "shared")
-            # optional egress path
+            # segmentation: prod ⊥ dev — dashed RED straight between them, ✘ verdict (non-reachable)
+            prod >> Edge(label=" ✘ prod ⊥ dev · no route (segmented) ", color=ROLE["deny"][0],
+                         style="dashed", penwidth="2.4", dir="both", fontname=BOLD,
+                         fontcolor=ROLE["deny"][0], constraint="false") >> dev
+            # optional egress path — dashed orange
             flow(prod_p, spoke_rt, "opt", dashed=True)
             flow(dev_p, spoke_rt, "opt", dashed=True)
             flow(spoke_rt, tgw_sub, "opt", dashed=True)
@@ -320,3 +346,4 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper
             igw >> Edge(style="invis") >> ssm
+            role >> Edge(style="invis") >> legend  # Legend column last
