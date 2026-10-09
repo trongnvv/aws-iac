@@ -10,7 +10,7 @@ import diagrams
 from diagrams import Cluster, Diagram, Edge, Node
 from diagrams.aws.compute import EC2Instance
 from diagrams.aws.management import SystemsManager
-from diagrams.aws.network import RouteTable, VPCPeering
+from diagrams.aws.network import VPCPeering
 from diagrams.aws.security import IAMRole
 
 # ── style ────────────────────────────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ def tag(s, color):  # small inline tag next to a card title
 def card(title, lines, role="main", ic=None, letter=None, tagged=None, width=300, rows=None):
     """White rounded card: icon left + bold title + muted fact lines (+ optional table rows)."""
     stroke, tint = ROLE[role]
-    bg = tint if role in ("opt", "deny") else "white"
+    bg = "white"  # white cards; role shown by the colored border + pill
     n = 1 + len(lines)
     left = img_cell(ic, rowspan=n) if ic else badge_cell(letter or title[0].upper(), stroke, rowspan=n)
     head = txt(title, 13, INK, BOLD)
@@ -239,10 +239,23 @@ graph_attr = dict(
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"),
              edge_attr=dict(fontname=FONT)):
+    # section-1 label = title + a plain-text legend line (no box) so the arrows/colors are explained
+    sep = txt("      ", 11, MUTED)
+    LEGEND = (
+        txt("Legend:  ", 11, INK, bold=True)
+        + txt("──▶ peering up / reachable (pcx a-b, pcx a-c)", 11, ROLE["shared"][0], bold=True) + sep
+        + txt("╌╌ B ⊥ C · no peering, no route (non-transitive)", 11, ROLE["deny"][0], bold=True) + sep
+        + txt("RT", 11, ROLE["hub"][0], bold=True) + txt(" = route table", 11, MUTED) + sep
+        + txt("main", 11, ROLE["main"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("hub", 11, ROLE["hub"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("mgmt", 11, ROLE["mgmt"][0], bold=True))
+    sec1_label = (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{W - 16}">'
+                  f'<TR><TD ALIGN="LEFT">{section_label(1, "Topology & traffic flow", W - 16)[1:-1]}</TD></TR>'
+                  f'<TR><TD ALIGN="LEFT" BALIGN="LEFT">{LEGEND}</TD></TR></TABLE>>')
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=sec1_label,
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — spoke B
@@ -250,51 +263,44 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                 b_host = node(card("B test host", ["public 10.1.0.0/24 · t4g.micro",
                                                    "RT 0/0 → IGW (SSM)", "RT 10.0/16 → pcx a-b"], "main",
                                    icon(EC2Instance)))
-                b_rt = node(card("B route table", ["only peer route is to A"], "main", icon(RouteTable),
+                b_rt = node(card("B route table", ["only peer route is to A"], "main", letter="RT",
                                  rows=[("10.0.0.0/16", "pcx a-b (→ A)", "main")]))
 
             # column 2 — hub A (peered to both B and C)
             with group("VPC A · 10.0.0.0/16 · hub (peers both)", "hub"):
                 a_pcx = node(card("A peers B and C", ["2 peering connections (auto_accept)",
-                                                      "same account + region"], "hub", icon(VPCPeering),
-                                  width=330))
+                                                      "same account + region"], "hub", icon(VPCPeering)))
                 a_host = node(card("A test host", ["public 10.0.0.0/24 · t4g.micro",
                                                    "RT 0/0 → IGW (SSM)", "reaches both B and C"], "hub",
-                                   icon(EC2Instance), width=330))
+                                   icon(EC2Instance)))
                 a_rt = node(card("A route table", ["learns BOTH peers (A is the hub)"], "hub",
-                                 icon(RouteTable), width=330,
+                                 letter="RT",
                                  rows=[("10.1.0.0/16", "pcx a-b (→ B)", "hub"),
                                        ("10.2.0.0/16", "pcx a-c (→ C)", "hub")]))
 
-            # column 3 — the non-transitive gap between B and C
-            with box("deny", dict(label="", style="invis", margin="4")):
-                deny = node(card("B ⊥ C · no peering, no route", [
-                    "non-transitive: A won't relay B↔C",
-                    "no third B↔C peering, no B→C / C→B route"],
-                    "deny", letter="✘", width=320))
-
-            # column 4 — spoke C
+            # column 4 — spoke C (B ⊥ C shown as the red dashed edge below, not a card)
             with group("VPC C · 10.2.0.0/16", "main"):
                 c_host = node(card("C test host", ["public 10.2.0.0/24 · t4g.micro",
                                                    "RT 0/0 → IGW (SSM)", "RT 10.0/16 → pcx a-c"], "main",
                                    icon(EC2Instance)))
-                c_rt = node(card("C route table", ["only peer route is to A"], "main", icon(RouteTable),
+                c_rt = node(card("C route table", ["only peer route is to A"], "main", letter="RT",
                                  rows=[("10.0.0.0/16", "pcx a-c (→ A)", "main")]))
 
             # column 5 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 test hosts (A/B/C)", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=270))
+                                "mgmt", icon(SystemsManager)))
                 role = node(card("net-lab-peer-ssm", ["IAM role + instance profile",
-                                                      "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                                                      "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole)))
 
-            # data path: B ↔ A ↔ C work (two peerings); B ⊥ C sits between them
+            # data path: B ↔ A ↔ C work (two peerings)
             flow(b_host, a_host, "main")
             flow(a_host, c_host, "hub")
+            # non-transitive: B ⊥ C — red dashed relation (no peering, no route)
+            b_host >> Edge(color=ROLE["deny"][0], style="dashed", penwidth="2.0", dir="both",
+                           constraint="false") >> c_host
 
             a_host >> Edge(style="invis") >> ssm  # keeps Management as the last column
-            deny >> Edge(style="invis") >> ssm    # pin the deny card ahead of Management
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
             for col in [[b_host, b_rt], [a_pcx, a_host, a_rt], [c_host, c_rt], [ssm, role]]:

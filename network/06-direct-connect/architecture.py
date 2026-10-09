@@ -11,7 +11,7 @@ from diagrams import Cluster, Diagram, Edge, Node
 from diagrams.aws.compute import EC2Instance
 from diagrams.aws.management import SystemsManager
 from diagrams.aws.network import (
-    DirectConnect, RouteTable, SiteToSiteVpn, TransitGateway, VPCCustomerGateway,
+    DirectConnect, TransitGateway, VPCCustomerGateway,
 )
 from diagrams.aws.security import IAMRole
 
@@ -26,7 +26,7 @@ ROLE = {  # one color per role: (stroke/pill, card tint)
     "deny":   ("#DC2626", "#FFF3F3"),
     "mgmt":   ("#64748B", "#F6F7F9"),
 }
-W = 1880  # full-width rows (header, section 2, footer)
+W = 2201  # full-width rows (header, section 2, footer)
 IW = W - 110  # content width inside the section-2 panel
 _BASE = Path(diagrams.__file__).resolve().parent.parent
 
@@ -67,7 +67,7 @@ def tag(s, color):  # small inline tag next to a card title
 def card(title, lines, role="main", ic=None, letter=None, tagged=None, width=300, rows=None):
     """White rounded card: icon left + bold title + muted fact lines (+ optional table rows)."""
     stroke, tint = ROLE[role]
-    bg = tint if role in ("opt", "deny") else "white"
+    bg = "white"  # white cards; role shown by the colored border + pill
     n = 1 + len(lines)
     left = img_cell(ic, rowspan=n) if ic else badge_cell(letter or title[0].upper(), stroke, rowspan=n)
     head = txt(title, 13, INK, BOLD)
@@ -250,10 +250,28 @@ graph_attr = dict(
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"),
              edge_attr=dict(fontname=FONT)):
+    # section-1 label = title + a plain-text legend line (no box) so the arrows/colors are explained
+    sep = txt("      ", 11, MUTED)
+    LEGEND = (
+        txt("Legend:  ", 11, INK, bold=True)
+        + txt("──▶ data path (via VPN transport stand-in)", 11, INK) + sep
+        + txt("──▶ tunnel 1 / BGP", 11, ROLE["shared"][0], bold=True) + sep
+        + txt("╌╌ tunnel 2 / backup (BGP)", 11, ROLE["shared"][0], bold=True) + sep
+        + txt("╌╌ physical cross-connect · Transit VIF (partner/manual, not IaC)", 11, ROLE["deny"][0], bold=True) + sep
+        + txt("──▶ DX Gateway ↔ TGW association", 11, ROLE["hub"][0], bold=True) + sep
+        + txt("RT", 11, ROLE["hub"][0], bold=True) + txt(" = route table", 11, MUTED) + sep
+        + txt("main", 11, ROLE["main"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("hub", 11, ROLE["hub"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("shared", 11, ROLE["shared"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("onprem/manual", 11, ROLE["opt"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("mgmt", 11, ROLE["mgmt"][0], bold=True))
+    sec1_label = (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{W - 44}">'
+                  f'<TR><TD ALIGN="LEFT">{section_label(1, "Topology & traffic flow", W - 44)[1:-1]}</TD></TR>'
+                  f'<TR><TD ALIGN="LEFT" BALIGN="LEFT">{LEGEND}</TD></TR></TABLE>>')
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=sec1_label,
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — simulated on-prem
@@ -266,7 +284,7 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                     "IKEv2 · vti1 / vti2 (fwmark 100 / 200) · MTU 1419",
                     "FRR BGP ASN 65000 · advertises 192.168.30/16",
                     "⚠ real DX: this box is the Transit VIF BGP peer",
-                ], "opt", icon(EC2Instance), width=340))
+                ], "opt", icon(EC2Instance)))
 
             # column 2 — the Transit VIF, stood in by a Site-to-Site VPN
             with group("Transit VIF = Site-to-Site VPN stand-in · dynamic (BGP)", "shared"):
@@ -281,25 +299,24 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                                 icon(VPCCustomerGateway)))
                 phys = node(card("🖐 physical cross-connect", ["partner / manual — NOT IaC",
                                                                "request DX connection + Transit VIF",
-                                                               "BGP to the DX Gateway"], "deny", letter="M",
-                                 width=300))
+                                                               "BGP to the DX Gateway"], "deny", letter="M"))
 
             # column 3 — DX Gateway (the DX-as-code control plane)
             with group("DX Gateway · global, logical (as-code half)", "hub"):
                 dxgw = node(card("DX Gateway", ["amazon-side ASN 64513",
                                                 "a Transit VIF BGP-peers here"], "hub",
-                                 icon(DirectConnect), width=330))
+                                 icon(DirectConnect)))
                 assoc = node(card("DXGW ↔ TGW association", ["associated_gateway_id = TGW",
                                                              "allowed_prefixes = [192.168.30/16]"], "hub",
-                                  icon(RouteTable), width=330,
+                                  letter="RT",
                                   rows=[("192.168.30.0/16", "allowed → TGW", "hub")]))
 
             # column 4 — transit gateway
             with group("Transit Gateway · default RT assoc/prop disabled", "hub"):
                 tgw = node(card("TGW", ["amazon-side ASN 64512", "vpn_ecmp_support = enable"], "hub",
-                                icon(TransitGateway), width=330))
+                                icon(TransitGateway)))
                 main_rt = node(card("main RT", ["assoc: aws VPC, VPN, DXGW attachments"], "hub",
-                                    icon(RouteTable), width=330,
+                                    letter="RT",
                                     rows=[("10.30.0.0/16", "aws VPC · propagated", "hub"),
                                           ("192.168.30.0/16", "VPN · propagated (BGP)", "hub")]))
 
@@ -312,10 +329,9 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
             # column 6 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 hosts: 2 test + strongSwan", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=270))
+                                "mgmt", icon(SystemsManager)))
                 role = node(card("net-lab-dx-ssm", ["IAM role + instance profile",
-                                                    "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                                                    "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole)))
 
             # data path: onprem host → router → Transit-VIF/VPN → DX Gateway → association → TGW → aws VPC
             flow(onprem, cgw_box, "main")

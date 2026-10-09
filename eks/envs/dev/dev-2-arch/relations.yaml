@@ -1,0 +1,62 @@
+# VPC / network deep-dive for EKS env=dev — modules/network (ap-southeast-1)
+# Source: eks/modules/network/{2-vpc,3-nat,3-routes,4-endpoints}.tf
+# All CIDRs derived from vpc_cidr 10.0.0.0/16: public/app = cidrsubnet(/16,4,i|i+3) → /20;
+# isolated = cidrsubnet(/16,8,i+96) → /24.  nat_per_az=false → ONE shared NAT in public-a.
+# kind: network | data | deny
+components:
+  - {id: internet,  name: Internet 0.0.0.0/0,     kind: external}
+  - {id: igw,       name: Internet Gateway,        kind: gateway}    # eks-dev-igw
+  - {id: nat,       name: NAT Gateway (+EIP),      kind: gateway}    # 1 shared, in public-a
+  # tier × AZ subnet grid
+  - {id: pub_a,     name: public-ap-southeast-1a,  kind: subnet}     # 10.0.0.0/20  role/elb
+  - {id: pub_b,     name: public-ap-southeast-1b,  kind: subnet}     # 10.0.16.0/20 role/elb
+  - {id: pub_c,     name: public-ap-southeast-1c,  kind: subnet}     # 10.0.32.0/20 role/elb
+  - {id: app_a,     name: app-ap-southeast-1a,     kind: subnet}     # 10.0.48.0/20 internal-elb+karpenter
+  - {id: app_b,     name: app-ap-southeast-1b,     kind: subnet}     # 10.0.64.0/20 internal-elb+karpenter
+  - {id: app_c,     name: app-ap-southeast-1c,     kind: subnet}     # 10.0.80.0/20 internal-elb+karpenter
+  - {id: iso_a,     name: isolated-ap-southeast-1a,kind: subnet}     # 10.0.96.0/24 no route
+  - {id: iso_b,     name: isolated-ap-southeast-1b,kind: subnet}     # 10.0.97.0/24 no route
+  - {id: iso_c,     name: isolated-ap-southeast-1c,kind: subnet}     # 10.0.98.0/24 no route
+  # route tables
+  - {id: pub_rt,    name: public-rt,               kind: routetable} # 0/0 → IGW, assoc 3 public
+  - {id: app_rt_a,  name: app-rt-1a,               kind: routetable} # 0/0 → NAT
+  - {id: app_rt_b,  name: app-rt-1b,               kind: routetable} # 0/0 → NAT
+  - {id: app_rt_c,  name: app-rt-1c,               kind: routetable} # 0/0 → NAT
+  - {id: iso_rt,    name: isolated-rt,             kind: routetable} # no 0/0 route
+  # endpoints
+  - {id: s3_gw,     name: S3 gateway endpoint,     kind: endpoint}   # free; assoc app-rt×3 + iso-rt
+  - {id: ifce,      name: interface endpoints,     kind: endpoint}   # ecr.api/ecr.dkr/secretsmanager
+  - {id: vpce_sg,   name: vpce-sg,                 kind: sg}         # 443 ingress from 10.0.0.0/16
+  # optional / OFF in dev
+  - {id: pod_sn,    name: pod subnets (off),       kind: optional}   # 100.64.0.0/16 secondary CIDR
+  - {id: nfw,       name: Network Firewall (off),  kind: optional}   # centralized egress inspection
+
+relations:
+  # internet boundary
+  - {id: n1,  from: igw,      to: internet, kind: network, protocol: 0.0.0.0/0, evidence: modules/network/2-vpc.tf:16, confidence: proven}
+  - {id: n2,  from: nat,      to: igw,      kind: network, protocol: egress, evidence: modules/network/3-nat.tf:13, confidence: proven}
+  # public tier → public-rt → IGW
+  - {id: n3,  from: pub_a,    to: pub_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:10, confidence: proven}
+  - {id: n4,  from: pub_b,    to: pub_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:10, confidence: proven}
+  - {id: n5,  from: pub_c,    to: pub_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:10, confidence: proven}
+  - {id: n6,  from: pub_rt,   to: igw,      kind: network, protocol: 0.0.0.0/0, evidence: modules/network/3-routes.tf:1, confidence: proven}
+  # app tier → per-AZ app-rt → shared NAT
+  - {id: n7,  from: app_a,    to: app_rt_a, kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:35, confidence: proven}
+  - {id: n8,  from: app_b,    to: app_rt_b, kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:35, confidence: proven}
+  - {id: n9,  from: app_c,    to: app_rt_c, kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:35, confidence: proven}
+  - {id: n10, from: app_rt_a, to: nat,      kind: network, protocol: 0.0.0.0/0, evidence: modules/network/3-routes.tf:24, confidence: proven}
+  - {id: n11, from: app_rt_b, to: nat,      kind: network, protocol: 0.0.0.0/0, evidence: modules/network/3-routes.tf:24, confidence: proven}
+  - {id: n12, from: app_rt_c, to: nat,      kind: network, protocol: 0.0.0.0/0, evidence: modules/network/3-routes.tf:24, confidence: proven}
+  # isolated tier → isolated-rt (no internet)
+  - {id: n13, from: iso_a,    to: iso_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:45, confidence: proven}
+  - {id: n14, from: iso_b,    to: iso_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:45, confidence: proven}
+  - {id: n15, from: iso_c,    to: iso_rt,   kind: network, protocol: assoc, evidence: modules/network/3-routes.tf:45, confidence: proven}
+  - {id: n16, from: iso_rt,   to: igw,      kind: deny,    protocol: no 0/0, evidence: modules/network/3-routes.tf:39, confidence: proven}
+  # S3 gateway endpoint — attached to app-rt×3 + isolated-rt (skips NAT)
+  - {id: n17, from: s3_gw,    to: app_rt_a, kind: network, protocol: S3 prefix, evidence: modules/network/4-endpoints.tf:2, confidence: proven}
+  - {id: n18, from: s3_gw,    to: app_rt_b, kind: network, protocol: S3 prefix, evidence: modules/network/4-endpoints.tf:2, confidence: proven}
+  - {id: n19, from: s3_gw,    to: app_rt_c, kind: network, protocol: S3 prefix, evidence: modules/network/4-endpoints.tf:2, confidence: proven}
+  - {id: n20, from: s3_gw,    to: iso_rt,   kind: network, protocol: S3 prefix, evidence: modules/network/4-endpoints.tf:6, confidence: proven}
+  # interface endpoints — ENIs in app subnets, reached from app tier over 443
+  - {id: n21, from: app_b,    to: ifce,     kind: data,    protocol: 443, evidence: modules/network/4-endpoints.tf:30, confidence: proven}
+  - {id: n22, from: vpce_sg,  to: ifce,     kind: network, protocol: 443, evidence: modules/network/4-endpoints.tf:12, confidence: proven}

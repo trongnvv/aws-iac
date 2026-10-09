@@ -69,7 +69,7 @@ def tag(s, color):  # small inline tag next to a card title
 def card(title, lines, role="main", ic=None, letter=None, tagged=None, width=300, rows=None):
     """White rounded card: icon left + bold title + muted fact lines (+ optional table rows)."""
     stroke, tint = ROLE[role]
-    bg = tint if role in ("opt", "deny") else "white"
+    bg = "white"  # white cards; role shown by the colored border + pill
     n = 1 + len(lines)
     left = img_cell(ic, rowspan=n) if ic else badge_cell(letter or title[0].upper(), stroke, rowspan=n)
     head = txt(title, 13, INK, BOLD)
@@ -239,10 +239,26 @@ graph_attr = dict(
 
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"), edge_attr=dict(fontname=FONT)):
+    # section-1 label = title + a plain-text legend line (no box) so the arrows/colors are explained
+    sep = txt("      ", 11, MUTED)
+    LEGEND = (
+        txt("Legend:  ", 11, INK, bold=True)
+        + txt("──▶ traffic path", 11, INK) + sep
+        + txt("╌╌ blocked · no route (prod ⊥ dev)", 11, ROLE["deny"][0], bold=True) + sep
+        + txt("╌╌ optional egress", 11, ROLE["opt"][0], bold=True) + sep
+        + txt("RT", 11, ROLE["hub"][0], bold=True) + txt(" = route table", 11, MUTED) + sep
+        + txt("main", 11, ROLE["main"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("hub", 11, ROLE["hub"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("shared", 11, ROLE["shared"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("optional", 11, ROLE["opt"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("mgmt", 11, ROLE["mgmt"][0], bold=True))
+    sec1_label = (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{W - 16}">'
+                  f'<TR><TD ALIGN="LEFT">{section_label(1, "Topology & traffic flow", W - 16)[1:-1]}</TD></TR>'
+                  f'<TR><TD ALIGN="LEFT" BALIGN="LEFT">{LEGEND}</TD></TR></TABLE>>')
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, RULES, CHECKS), labelloc="b",
                                      labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=sec1_label,
                                          labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                          bgcolor=PANEL, margin="22")):
             # column 1 — spoke VPCs (flat cards; prod ⊥ dev shown as the red dashed edge below)
@@ -260,10 +276,10 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                 tgw = node(card("TGW hub", ["one VPC attachment per VPC",
                                             "spokes attach in public subnet"], "hub", icon(TransitGateway),
                                 width=300))
-                spoke_rt = node(card("spoke-rt", ["assoc: prod, dev"], "hub", icon(RouteTable), width=300,
+                spoke_rt = node(card("spoke-rt", ["assoc: prod, dev"], "hub", letter="RT", width=300,
                                      rows=[("10.0.0.0/16", "shared · propagated", "hub"),
                                            ("0.0.0.0/0", "shared · static (egress)", "opt")]))
-                shared_rt = node(card("shared-rt", ["assoc: shared"], "hub", icon(RouteTable), width=300,
+                shared_rt = node(card("shared-rt", ["assoc: shared"], "hub", letter="RT", width=300,
                                       rows=[("10.1.0.0/16", "prod · propagated", "hub"),
                                             ("10.2.0.0/16", "dev · propagated", "hub")]))
 
@@ -309,7 +325,7 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
             flow(igw, inet, "opt", dashed=True, constraint=False)
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
-            for col in [[prod, prod_p, dev, dev_p], [tgw, spoke_rt, shared_rt],
+            for col in [[prod, dev, prod_p, dev_p], [tgw, spoke_rt, shared_rt],
                         [nat, tgw_sub, shared], [ssm, role]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper

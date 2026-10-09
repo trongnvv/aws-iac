@@ -1,0 +1,74 @@
+# AWS infrastructure relations for EKS env=dev (ap-southeast-1)
+# Extracted from eks/envs/dev/00-infra/*/main.tf and the modules they consume.
+# kind: sync | async | data | network | control | deny
+# confidence: proven (stated in source) | inferred
+components:
+  # ── edge ──────────────────────────────────────────────────────────────
+  - {id: users,      name: Internet users,         kind: external}
+  - {id: igw,        name: Internet Gateway,       kind: network}
+  - {id: nat,        name: NAT Gateway (+EIP),     kind: network}     # 1 shared (nat_per_az=false)
+  - {id: alb,        name: Application LB,          kind: lb}          # created at runtime by LBC
+  # ── vpc 10.0.0.0/16 ───────────────────────────────────────────────────
+  - {id: vpc,        name: VPC 10.0.0.0/16,        kind: network}
+  - {id: sn_public,  name: public subnets x3,      kind: subnet}      # /20, kubernetes.io/role/elb
+  - {id: sn_app,     name: app subnets x3,         kind: subnet}      # /20, internal-elb + karpenter
+  - {id: sn_isolated,name: isolated subnets x3,    kind: subnet}      # /24, no route (DB tier)
+  - {id: vpce,       name: VPC endpoints,          kind: network}     # S3 gw + ECR.api/dkr + SecretsMgr
+  # ── eks ───────────────────────────────────────────────────────────────
+  - {id: eks_cp,     name: EKS control plane,      kind: eks}         # eks-dev v1.36, public+private
+  - {id: nodegroup,  name: system node group,      kind: compute}     # t4g.medium ON_DEMAND 2-3
+  - {id: karpenter,  name: Karpenter nodes,        kind: compute}     # JIT, spot/on-demand
+  - {id: podid,      name: EKS Pod Identity,       kind: iam}         # agent addon + associations
+  # ── aws managed services (targets of pod-identity roles) ───────────────
+  - {id: ecr,        name: ECR,                    kind: svc}
+  - {id: secretsmgr, name: Secrets Manager,        kind: svc}
+  - {id: route53,    name: Route 53,               kind: svc}
+  - {id: elb_api,    name: ELB / EC2 API,          kind: svc}
+  - {id: sqs,        name: SQS interruption,       kind: svc}
+  - {id: eventbridge,name: EventBridge,            kind: svc}
+  - {id: cloudwatch, name: CloudWatch Logs,        kind: svc}
+  - {id: amp,        name: Managed Prometheus,     kind: svc}
+  - {id: xray,       name: X-Ray,                  kind: svc}
+  - {id: sns,        name: SNS alerts,             kind: svc}
+  - {id: costexp,    name: Cost Explorer,          kind: svc}
+  - {id: ebs,        name: EBS volumes,            kind: svc}
+  - {id: s3_state,   name: S3 tfstate,             kind: svc}         # eks-iac-tfstate
+  # ── optional / OFF in dev ─────────────────────────────────────────────
+  - {id: waf,        name: WAFv2 (off),            kind: optional}
+  - {id: backup,     name: Velero + S3 (off),      kind: optional}
+  - {id: secbase,    name: GuardDuty/Config (off), kind: optional}
+
+relations:
+  # inbound
+  - {id: r1,  from: users,     to: igw,        kind: sync,    protocol: HTTPS/443, evidence: modules/network/2-vpc.tf:16, confidence: proven}
+  - {id: r2,  from: igw,       to: alb,        kind: network, evidence: modules/network/2-vpc.tf:28, confidence: inferred}
+  - {id: r3,  from: alb,       to: nodegroup,  kind: sync,    protocol: HTTP, evidence: addon-iam/2-lbc.tf, confidence: inferred}
+  # egress
+  - {id: r4,  from: sn_app,    to: nat,        kind: network, protocol: 0.0.0.0/0, evidence: modules/network/3-routes.tf:19, confidence: proven}
+  - {id: r5,  from: nat,       to: igw,        kind: network, evidence: modules/network/3-nat.tf:13, confidence: proven}
+  - {id: r6,  from: sn_app,    to: vpce,       kind: network, protocol: 443, evidence: modules/network/4-endpoints.tf:25, confidence: proven}
+  - {id: r7,  from: vpce,      to: ecr,        kind: network, evidence: modules/network/4-endpoints.tf:25, confidence: proven}
+  - {id: r8,  from: vpce,      to: secretsmgr, kind: network, evidence: modules/network/4-endpoints.tf:25, confidence: proven}
+  # cluster membership
+  - {id: r9,  from: eks_cp,    to: nodegroup,  kind: control, protocol: 443/10250, evidence: modules/eks/2-eks.tf:68, confidence: proven}
+  - {id: r10, from: eks_cp,    to: karpenter,  kind: control, evidence: modules/eks/2-eks.tf:8, confidence: proven}
+  - {id: r11, from: nodegroup, to: podid,      kind: control, evidence: modules/eks/2-eks.tf:62, confidence: proven}
+  # karpenter
+  - {id: r12, from: eventbridge, to: sqs,      kind: async,   protocol: spot-interrupt, evidence: modules/karpenter-infra/2-karpenter.tf, confidence: proven}
+  - {id: r13, from: karpenter, to: sqs,        kind: async,   evidence: modules/karpenter-infra/2-karpenter.tf, confidence: proven}
+  # pod-identity roles -> aws services
+  - {id: r14, from: podid,     to: elb_api,    kind: control, protocol: LBC, evidence: modules/addon-iam/2-lbc.tf, confidence: proven}
+  - {id: r15, from: podid,     to: route53,    kind: control, protocol: external-dns+cert-manager, evidence: modules/addon-iam/4-external-dns.tf, confidence: proven}
+  - {id: r16, from: podid,     to: secretsmgr, kind: data,    protocol: ESO, evidence: modules/addon-iam/3-eso.tf, confidence: proven}
+  - {id: r17, from: podid,     to: ecr,        kind: data,    protocol: ESO helm, evidence: modules/addon-iam/3-eso.tf, confidence: proven}
+  - {id: r18, from: podid,     to: cloudwatch, kind: data,    protocol: KEDA, evidence: modules/addon-iam/5-keda.tf, confidence: proven}
+  - {id: r19, from: podid,     to: sqs,        kind: data,    protocol: KEDA, evidence: modules/addon-iam/5-keda.tf, confidence: proven}
+  - {id: r20, from: podid,     to: costexp,    kind: data,    protocol: Kubecost, evidence: modules/addon-iam/7-kubecost.tf, confidence: proven}
+  - {id: r21, from: podid,     to: ebs,        kind: data,    protocol: EBS CSI, evidence: modules/eks/3-ebs-csi.tf, confidence: proven}
+  # observability pipeline
+  - {id: r22, from: podid,     to: amp,        kind: data,    protocol: ADOT+Prom remote-write, evidence: modules/observability-aws/2-amp.tf, confidence: proven}
+  - {id: r23, from: podid,     to: xray,       kind: data,    protocol: ADOT, evidence: modules/observability-aws/2-amp.tf:20, confidence: proven}
+  - {id: r24, from: podid,     to: cloudwatch, kind: data,    protocol: Fluent Bit, evidence: modules/observability-aws/3-logs.tf, confidence: proven}
+  - {id: r25, from: amp,       to: sns,        kind: async,   protocol: AlertManager, evidence: modules/observability-aws/5-alerting.tf:57, confidence: proven}
+  # state
+  - {id: r26, from: eks_cp,    to: s3_state,   kind: data,    protocol: tf backend, evidence: envs/dev/00-infra/01-eks/main.tf:4, confidence: proven}

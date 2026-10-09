@@ -67,7 +67,7 @@ def tag(s, color):  # small inline tag next to a card title
 def card(title, lines, role="main", ic=None, letter=None, tagged=None, width=300, rows=None):
     """White rounded card: icon left + bold title + muted fact lines (+ optional table rows)."""
     stroke, tint = ROLE[role]
-    bg = tint if role in ("opt", "deny") else "white"
+    bg = "white"  # white cards; role shown by the colored border + pill
     n = 1 + len(lines)
     left = img_cell(ic, rowspan=n) if ic else badge_cell(letter or title[0].upper(), stroke, rowspan=n)
     head = txt(title, 13, INK, BOLD)
@@ -243,10 +243,25 @@ graph_attr = dict(
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"),
              edge_attr=dict(fontname=FONT)):
+    # section-1 label = title + a plain-text legend line (no box) so the arrows/colors are explained
+    sep = txt("      ", 11, MUTED)
+    LEGEND = (
+        txt("Legend:  ", 11, INK, bold=True)
+        + txt("──▶ AWS→on-prem (corp.local via outbound EP)", 11, ROLE["shared"][0], bold=True) + sep
+        + txt("╌╌▶ on-prem→AWS (aws.internal via inbound EP → PHZ)", 11, ROLE["hub"][0], bold=True) + sep
+        + txt("VPC peering link", 11, ROLE["hub"][0], bold=True) + sep
+        + txt("main", 11, ROLE["main"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("hub", 11, ROLE["hub"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("shared", 11, ROLE["shared"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("on-prem", 11, ROLE["opt"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("mgmt", 11, ROLE["mgmt"][0], bold=True))
+    sec1_label = (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{W - 16}">'
+                  f'<TR><TD ALIGN="LEFT">{section_label(1, "Topology & traffic flow", W - 16)[1:-1]}</TD></TR>'
+                  f'<TR><TD ALIGN="LEFT" BALIGN="LEFT">{LEGEND}</TD></TR></TABLE>>')
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=sec1_label,
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — AWS VPC: resolver endpoints + PHZ + test host
@@ -254,19 +269,19 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                 out_ep = node(card("Resolver OUTBOUND endpoint", [
                     "2 ENIs (subnet a + b) · SG egress 53 → on-prem",
                     "AWS→on-prem egress path for corp.local",
-                ], "shared", icon(VPCElasticNetworkInterface), width=330))
+                ], "shared", icon(VPCElasticNetworkInterface)))
                 corp_rule = node(card("corp.local FORWARD rule", [
                     "rule_type FORWARD → outbound EP",
                     "target 192.168.0.53:53 · assoc aws VPC",
-                ], "shared", icon(Route53), width=330))
+                ], "shared", icon(Route53)))
                 inb_ep = node(card("Resolver INBOUND endpoint", [
                     "2 ENIs (subnet a + b) · SG ingress 53 from on-prem",
                     "on-prem→AWS entry for aws.internal",
-                ], "shared", icon(VPCElasticNetworkInterface), width=330))
+                ], "shared", icon(VPCElasticNetworkInterface)))
                 phz = node(card("PHZ aws.internal", [
                     "private hosted zone · assoc aws VPC",
                     "test.aws.internal A → 10.20.99.99",
-                ], "hub", icon(Route53HostedZone), width=330))
+                ], "hub", icon(Route53HostedZone)))
                 aws_host = node(card("aws test host", ["public 10.20.0.0/24 · t4g.micro",
                                                        "dig host1.corp.local", "SSM, no SSH"], "main",
                                      icon(EC2Instance)))
@@ -278,7 +293,7 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                     "RT aws: 192.168/16 → pcx",
                     "RT onprem: 10.20/16 → pcx",
                     "carries forwarded DNS packets",
-                ], "hub", icon(VPCPeering), width=300))
+                ], "hub", icon(VPCPeering)))
 
             # column 3 — simulated on-prem VPC: dnsmasq + test host
             with group("“On-prem” VPC · 192.168.0.0/16 (simulated)", "opt"):
@@ -287,7 +302,7 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                     "authoritative corp.local (host1 → .80)",
                     "forwards aws.internal → inbound EP IPs",
                     "owns shared SSM role",
-                ], "opt", icon(EC2Instance), width=330))
+                ], "opt", icon(EC2Instance)))
                 onprem_host = node(card("onprem test host", ["public 192.168.0.0/24 · t4g.micro",
                                                              "resolv.conf → 192.168.0.53",
                                                              "dig test.aws.internal"], "main",
@@ -296,10 +311,9 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
             # column 4 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 hosts: 2 test + dnsmasq", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=270))
+                                "mgmt", icon(SystemsManager)))
                 role = node(card("net-lab-r53-ssm", ["IAM role + instance profile",
-                                                     "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
-                                 width=270))
+                                                     "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole)))
 
             # AWS → on-prem (corp.local): host → rule → outbound EP → peering → dnsmasq
             flow(aws_host, corp_rule, "main")

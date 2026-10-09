@@ -67,7 +67,7 @@ def tag(s, color):  # small inline tag next to a card title
 def card(title, lines, role="main", ic=None, letter=None, tagged=None, width=300, rows=None):
     """White rounded card: icon left + bold title + muted fact lines (+ optional table rows)."""
     stroke, tint = ROLE[role]
-    bg = tint if role in ("opt", "deny") else "white"
+    bg = "white"  # white cards; role shown by the colored border + pill
     n = 1 + len(lines)
     left = img_cell(ic, rowspan=n) if ic else badge_cell(letter or title[0].upper(), stroke, rowspan=n)
     head = txt(title, 13, INK, BOLD)
@@ -245,10 +245,24 @@ graph_attr = dict(
 with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", graph_attr=graph_attr,
              node_attr=dict(fontname=FONT, fixedsize="false", width="0", height="0", style="", labelloc="c"),
              edge_attr=dict(fontname=FONT)):
+    # section-1 label = title + a plain-text legend line (no box) so the arrows/colors are explained
+    sep = txt("      ", 11, MUTED)
+    LEGEND = (
+        txt("Legend:  ", 11, INK, bold=True)
+        + txt("──▶ traffic path: consumer → interface endpoint (ENI) → NLB → service", 11, INK) + sep
+        + txt("✔ works across the overlapping 10.0.0.0/16", 11, ROLE["shared"][0], bold=True) + sep
+        + txt("╌╌ direct to provider private IP · no route (not L3 routing)", 11, ROLE["deny"][0], bold=True) + sep
+        + txt("main", 11, ROLE["main"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("shared", 11, ROLE["shared"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("hub", 11, ROLE["hub"][0], bold=True) + txt(" · ", 11, MUTED)
+        + txt("mgmt", 11, ROLE["mgmt"][0], bold=True))
+    sec1_label = (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{W - 16}">'
+                  f'<TR><TD ALIGN="LEFT">{section_label(1, "Topology & traffic flow", W - 16)[1:-1]}</TD></TR>'
+                  f'<TR><TD ALIGN="LEFT" BALIGN="LEFT">{LEGEND}</TD></TR></TABLE>>')
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
+        with box("section1", dict(label=sec1_label,
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
             # column 1 — consumer VPC B
@@ -257,11 +271,11 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                                                           "SSM · no SSH · curls $EP_DNS",
                                                           "RT 0/0 → IGW (SSM only)"], "main", icon(EC2Instance)))
                 eni = node(card("interface endpoint ENI", [
-                    "private IP inside B's own subnet",
+                    "ENI in B's subnet · terminates TCP",
                     "SG: 80/443 from 10.0.0.0/16",
                     "private_dns_enabled = false",
                     "resolves the vpce-… DNS name",
-                ], "main", icon(VPCElasticNetworkInterface), width=330))
+                ], "main", icon(VPCElasticNetworkInterface)))
 
             # column 2 — overlap note + PrivateLink
             with group("PrivateLink · tunnels ENI → NLB", "shared"):
@@ -270,37 +284,40 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
                     "consumer talks to the ENI (IP in B)",
                     "no route between the two 10.0/16 ever consulted",
                     "overlap irrelevant — what TGW/peering can't do",
-                ], "deny", letter="⚠", width=340))
+                ], "deny", letter="⚠"))
                 pl = node(card("endpoint service (PrivateLink)", [
                     "com.amazonaws.vpce.<region>.vpce-svc-xxxx",
                     "acceptance_required = false",
                     "no peering / TGW — only path in",
-                ], "shared", icon(Endpoint), width=340))
+                ], "shared", icon(Endpoint)))
 
             # column 3 — provider VPC A
             with group("VPC A · provider · 10.0.0.0/16 (overlaps!)", "hub"):
                 nlb = node(card("internal NLB :80", ["network LB · internal only",
                                                      "TG net-lab-pl-tg · TCP :80 · health TCP 80",
                                                      "the only thing PrivateLink can publish"], "hub",
-                                icon(ElbNetworkLoadBalancer), width=330))
+                                icon(ElbNetworkLoadBalancer)))
                 svc = node(card("service EC2 (labhttp)", ["public 10.0.0.0/24 · t4g.micro",
                                                           "python3 -m http.server :80 (systemd)",
                                                           "serves 'hello from PrivateLink provider (VPC A)'"],
-                                "hub", icon(EC2Instance), width=330))
+                                "hub", icon(EC2Instance)))
 
             # column 4 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["2 hosts: consumer + service", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=270))
+                                "mgmt", icon(SystemsManager)))
                 role = node(card("net-lab-pl-ssm", ["IAM role + instance profile (in 2-provider)",
                                                     "AmazonSSMManagedInstanceCore · reused by 4-ec2"], "mgmt",
-                                 icon(IAMRole), width=270))
+                                 icon(IAMRole)))
 
             # data path: consumer host → ENI ══PrivateLink══ NLB → service EC2
             flow(client, eni, "main")
             flow(eni, pl, "shared")
             flow(pl, nlb, "shared")
             flow(nlb, svc, "hub")
+            # red relation: direct to provider private IP never works — no route (not L3 routing)
+            client >> Edge(color=ROLE["deny"][0], style="dashed", penwidth="2.0", dir="both",
+                           constraint="false") >> svc
 
             svc >> Edge(style="invis") >> ssm  # keeps Management as the last column
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
