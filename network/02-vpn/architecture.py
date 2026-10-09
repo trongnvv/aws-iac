@@ -198,17 +198,17 @@ HEADER = ("AWS Network Lab 2 — Site-to-Site VPN → Transit Gateway",
           "aws VPC · self-contained, independent of lab 1 · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "cloud + on-prem VPCs · Subnet · Internet Gateway · Security Groups", "main"),
-    ("TGW", "2-tgw/", "Transit Gateway · VPC attachment · TGW route table · route", "main"),
-    ("VPN", "3-vpn/", "Elastic IP · Customer Gateway · Site-to-Site VPN (2 tunnels)", "main"),
-    ("strongSwan", "4-strongswan/", "EC2 appliance (strongSwan) · IAM role + profile · route", "main"),
-    ("EC2", "5-ec2/", "2 test EC2 instances (cloud + on-prem)", "main"),
+    ("VPC", "1-vpc/", "aws + onprem VPCs · subnet · IGW · SGs", "main"),
+    ("TGW", "2-tgw/", "TGW · aws attachment · main RT · route", "main"),
+    ("VPN", "3-vpn/", "EIP · customer gateway · VPN (2 tunnels)", "main"),
+    ("strongSwan", "4-strongswan/", "CGW appliance · SSM role · route", "main"),
+    ("EC2", "5-ec2/", "2 test hosts (aws + onprem)", "main"),
 ]
 BANNERS = [
     ("Invariants:", [
         "dynamic VPN (BGP), not static routes",
-        "TGW default RT assoc/prop disabled — one TGW route table",
-        "Security Groups: ICMP from 10.0.0.0/8 + 192.168.0.0/16",
+        "TGW default RT assoc/prop disabled — one main RT",
+        "SGs: ICMP from 10.0.0.0/8 + 192.168.0.0/16",
         "no SSH — SSM only",
     ]),
     ("⚠ Built blind — verify live:", [
@@ -231,10 +231,10 @@ CHECKS = (("Verify", "via SSM + AWS CLI"), icon(SystemsManager), [
     ("S3", "stretch: MTU / PMTUD", "MSS clamp · ping -M do -s", "opt"),
 ])
 FOOTER = ("Cost & teardown", [
-    "Site-to-Site VPN connection ≈ $0.05/h",
-    "Transit Gateway ≈ $0.05/attachment-h × 2 + data",
+    "VPN connection ≈ $0.05/h",
+    "TGW ≈ $0.05/attachment-h × 2 + data",
     "3× t4g.micro ≈ $0.025/h",
-    "Elastic IP + 3× public IPv4 ≈ $0.005/h × 4",
+    "EIP + 3× public IPv4 ≈ $0.005/h × 4",
     "≈ $0.25/h → ./teardown.sh (VPN bills until 3-vpn destroyed)",
 ])
 
@@ -252,93 +252,70 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "AWS resources created & who reaches whom", W - 16),
+        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
-            # column 1 — simulated on-prem (AWS objects; title matches content)
+            # column 1 — simulated on-prem
             with group("“On-prem” VPC · 192.168.0.0/16 (simulated)", "opt"):
-                onprem = node(card("EC2 instance · Subnet · Route table (on-prem)", [
-                    "Subnet 192.168.0.0/24 (public) · t4g.micro · AL2023",
-                    "Route table: 10.10.0.0/16 → strongSwan ENI",
-                    "Route table: 0.0.0.0/0 → Internet Gateway (SSM)"], "main", icon(EC2Instance), width=340))
-                cgw_box = node(card("EC2 instance (strongSwan appliance)", [
-                    "t4g.micro · Elastic IP · source/dest check = off",
+                onprem = node(card("onprem test host", ["public 192.168.0.0/24 · t4g.micro",
+                                                        "RT 10.10/16 → strongSwan ENI",
+                                                        "RT 0/0 → IGW (SSM)"], "main", icon(EC2Instance)))
+                cgw_box = node(card("strongSwan + FRR appliance", [
+                    "t4g.micro · EIP · source_dest_check = false",
                     "IKEv2 · vti1 / vti2 (fwmark 100 / 200) · MTU 1419",
-                    "FRR BGP ASN 65000 · advertises 192.168.0.0/16",
+                    "FRR BGP ASN 65000 · advertises 192.168/16",
                     "tunnel 2 local-pref 90 (backup)",
-                ], "opt", icon(EC2Instance), width=340))
+                ], "opt", icon(EC2Instance), width=330))
 
-            # column 2 — the Site-to-Site VPN connection (2 tunnels)
-            with group("Site-to-Site VPN (2 tunnels) · dynamic (BGP)", "shared"):
+            # column 2 — the VPN connection
+            with group("Site-to-Site VPN · ipsec.1 · dynamic (BGP)", "shared"):
                 t1 = node(card("Tunnel 1", ["IPsec IKEv2 · own PSK + outside IP",
-                                            "inside /30 (169.254.x.x) · BGP to VGW",
+                                            "inside /30 (169.254.x.x) · BGP to vgw",
                                             "preferred path"], "shared", letter="1"))
                 t2 = node(card("Tunnel 2", ["IPsec IKEv2 · own PSK + outside IP",
-                                            "inside /30 (169.254.x.x) · BGP to VGW",
+                                            "inside /30 (169.254.x.x) · BGP to vgw",
                                             "backup (DPD 10s · BGP timers 10/30)"], "shared", letter="2"))
                 cgw = node(card("Customer Gateway", ["AWS record of the on-prem peer",
-                                                     "Elastic IP of appliance · BGP ASN 65000"], "shared",
+                                                     "EIP from 3-vpn · BGP ASN 65000"], "shared",
                                 icon(VPCCustomerGateway)))
 
-            # column 3 — Transit Gateway + its route table
+            # column 3 — transit gateway
             with group("Transit Gateway · default RT assoc/prop disabled", "hub"):
-                tgw = node(card("Transit Gateway", ["amazon-side ASN 64512", "ECMP support = enable"], "hub",
+                tgw = node(card("TGW", ["amazon-side ASN 64512", "vpn_ecmp_support = enable"], "hub",
                                 icon(TransitGateway), width=330))
-                main_rt = node(card("TGW route table", ["assoc: VPC attachment + VPN attachment"], "hub",
+                main_rt = node(card("main RT", ["assoc: aws VPC attachment, VPN attachment"], "hub",
                                     icon(RouteTable), width=330,
-                                    rows=[("10.10.0.0/16", "VPC attach · propagated", "hub"),
-                                          ("192.168.0.0/16", "VPN attach · propagated (BGP)", "hub")]))
+                                    rows=[("10.10.0.0/16", "aws VPC · propagated", "hub"),
+                                          ("192.168.0.0/16", "VPN · propagated (BGP)", "hub")]))
 
             # column 4 — cloud VPC
-            with group("VPC (cloud) · 10.10.0.0/16", "main"):
-                attach = node(card("Transit Gateway attachment", ["in Subnet 10.10.0.0/24 (public)"], "main",
+            with group("VPC aws · 10.10.0.0/16", "main"):
+                attach = node(card("VPC attachment", ["in public subnet 10.10.0.0/24"], "main",
                                    icon(TransitGatewayAttachment)))
-                aws_host = node(card("EC2 instance · Route table (cloud)", [
-                    "Subnet 10.10.0.0/24 (public) · t4g.micro",
-                    "Route table: 192.168.0.0/16 → Transit Gateway",
-                    "Route table: 0.0.0.0/0 → Internet Gateway (SSM)"], "main", icon(EC2Instance), width=340))
+                aws_host = node(card("aws test host", ["public 10.10.0.0/24 · t4g.micro",
+                                                       "RT 192.168/16 → TGW", "RT 0/0 → IGW (SSM)"], "main",
+                                     icon(EC2Instance)))
 
             # column 5 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["3 hosts: 2 test + strongSwan", "no SSH, no key pair"],
                                 "mgmt", icon(SystemsManager), width=270))
-                role = node(card("IAM role + instance profile", ["net-lab-vpn-ssm",
-                                                                 "AmazonSSMManagedInstanceCore"], "mgmt",
-                                 icon(IAMRole), width=270))
+                role = node(card("net-lab-vpn-ssm", ["IAM role + instance profile",
+                                                     "AmazonSSMManagedInstanceCore"], "mgmt", icon(IAMRole),
+                                 width=270))
 
-            # column 6 — legend (colour key: what the verdicts on the edges mean)
-            with group("Legend", "main"):
-                legend = node(card("Legend", [], "main", letter="❖", width=290,
-                                   rows=[("reachable", "tunnel UP + BGP up  ✓", "shared"),
-                                         ("blocked", "tunnel DOWN / no route  ✘", "deny"),
-                                         ("hub", "TGW relays the two sides", "hub"),
-                                         ("mgmt", "SSM / IAM", "mgmt"),
-                                         ("⚠ built blind", "verify live (see banner)", "deny")]))
+            # data path: onprem host → appliance → tunnels → TGW → aws VPC
+            flow(onprem, cgw_box, "main")
+            flow(cgw_box, t1, "shared")
+            flow(cgw_box, t2, "shared", dashed=True)
+            flow(t1, tgw, "shared")
+            flow(t2, tgw, "shared", dashed=True)
+            flow(tgw, attach, "hub")
+            flow(attach, aws_host, "main")
 
-            # data path: on-prem → appliance → 2 tunnels → TGW → cloud VPC.
-            # reachability is the story → ✓/✘ verdicts + the tunnel/BGP dependency on the edges.
-            onprem >> Edge(label="  ✓ private over VPN  ", color=ROLE["main"][0], penwidth="2.2",
-                           fontname=BOLD, fontcolor=ROLE["main"][0], dir="both") >> cgw_box
-            cgw_box >> Edge(label="  ✓ Tunnel 1 — IPsec + BGP (preferred)  ", color=ROLE["shared"][0],
-                            penwidth="2.4", fontname=BOLD, fontcolor=ROLE["shared"][0], dir="both") >> t1
-            cgw_box >> Edge(label=" ✓ Tunnel 2 — IPsec + BGP (backup) ", color=ROLE["shared"][0],
-                            style="dashed", penwidth="2.0", fontname=BOLD, fontcolor=ROLE["shared"][0],
-                            dir="both") >> t2
-            t1 >> Edge(color=ROLE["shared"][0], penwidth="2.4", dir="both") >> tgw
-            t2 >> Edge(color=ROLE["shared"][0], style="dashed", penwidth="2.0", dir="both") >> tgw
-            tgw >> Edge(label="  ✓ TGW relays  ", color=ROLE["hub"][0], penwidth="2.2", fontname=BOLD,
-                        fontcolor=ROLE["hub"][0], dir="both") >> attach
-            attach >> Edge(color=ROLE["main"][0], penwidth="2.2", dir="both") >> aws_host
-            # ✘ the path is dead until both lower layers hold — the dependency the verdicts ride on
-            t1 >> Edge(label=" ✘ no reach if tunnel DOWN or BGP not Established ",
-                       color=ROLE["deny"][0], style="dashed", penwidth="2.0", dir="none",
-                       fontname=BOLD, fontcolor=ROLE["deny"][0], constraint="false") >> attach
-
-            aws_host >> Edge(style="invis") >> ssm    # keeps Management as the next column
-            role >> Edge(style="invis") >> legend     # Legend column last
+            aws_host >> Edge(style="invis") >> ssm  # keeps Management as the last column
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
-            for col in [[onprem, cgw_box], [t1, t2, cgw], [tgw, main_rt], [attach, aws_host],
-                        [ssm, role], [legend]]:
+            for col in [[onprem, cgw_box], [t1, t2, cgw], [tgw, main_rt], [attach, aws_host], [ssm, role]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper

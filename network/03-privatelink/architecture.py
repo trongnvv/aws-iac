@@ -11,7 +11,7 @@ from diagrams import Cluster, Diagram, Edge, Node
 from diagrams.aws.compute import EC2Instance
 from diagrams.aws.management import SystemsManager
 from diagrams.aws.network import (
-    ElbNetworkLoadBalancer, Endpoint, Privatelink, RouteTable, VPCElasticNetworkInterface,
+    ElbNetworkLoadBalancer, Endpoint, Privatelink, VPCElasticNetworkInterface,
 )
 from diagrams.aws.security import IAMRole
 
@@ -192,45 +192,44 @@ def section2_html(steps, banners, checks):
             f'<TR><TD>{footer(*FOOTER)}</TD></TR></TABLE>>')
 
 
-# ── content (AWS resources as they appear in the console, not Terraform names) ───────────────────
-HEADER = ("AWS Network Lab 3 — PrivateLink (share one service across overlapping CIDRs)",
-          "Endpoint Service (NLB-backed) in the provider VPC ⇄ Interface VPC Endpoint (ENI) in the consumer "
-          "VPC · reaches the service though BOTH VPCs are 10.0.0.0/16 — no route ever consulted · ap-southeast-1")
+# ── content (from 1-vpc … 4-ec2 *.tf and README.md) ───────────────────────────────────────────────
+HEADER = ("AWS Network Lab 3 — PrivateLink (share one service, overlapping CIDR)",
+          "NLB-backed endpoint service in VPC A ⇄ interface endpoint in VPC B · works despite both VPCs "
+          "10.0.0.0/16 (no route ever consulted) · self-contained · ap-southeast-1")
 
 STEPS = [  # (name, folder, builds, role)
-    ("VPC", "1-vpc/", "provider + consumer VPC (identical 10.0.0.0/16) · Subnet · Internet Gateway · Security Group", "main"),
-    ("Provider", "2-provider/", "EC2 instance · Network Load Balancer · Endpoint Service (NLB-backed) · IAM role", "main"),
-    ("Consumer", "3-consumer/", "Interface VPC Endpoint (ENI) + endpoint Security Group", "main"),
-    ("EC2", "4-ec2/", "consumer EC2 instance · curls the endpoint DNS name", "main"),
+    ("VPC", "1-vpc/", "VPC A + VPC B (identical 10.0/16) · subnet · IGW · SGs", "main"),
+    ("Provider", "2-provider/", "service EC2 · internal NLB · endpoint service · SSM role", "main"),
+    ("Consumer", "3-consumer/", "interface endpoint (ENI in B) + its SG", "main"),
+    ("EC2", "4-ec2/", "consumer test host in VPC B · curls endpoint DNS", "main"),
 ]
 BANNERS = [
     ("Invariants:", [
-        "overlapping CIDR on purpose — both VPCs are 10.0.0.0/16",
-        "no VPC Peering / Transit Gateway — the endpoint is the only path",
-        "private DNS disabled — curl the vpce-… endpoint DNS name",
-        "acceptance not required — no approval handshake",
-        "Endpoint Security Group: ingress 80/443 from 10.0.0.0/16",
-        "consumer host: egress only · no SSH — SSM only",
+        "overlapping CIDR on purpose — A and B both 10.0.0.0/16",
+        "no peering / TGW — the endpoint is the only path",
+        "private_dns_enabled=false — curl the vpce-… DNS name",
+        "acceptance_required=false — no approval handshake",
+        "no SSH — SSM only",
     ]),
     ("⚠ Built blind — verify live:", [
-        "Endpoint Service reaches Available",
-        "Interface VPC Endpoint reaches available (not pendingAcceptance)",
+        "endpoint service reaches Available",
+        "interface endpoint reaches available (not pendingAcceptance)",
         "NLB target healthy",
-        "curl reaches the service across the overlapping 10.0.0.0/16",
+        "curl works across the overlap",
     ], "deny"),
 ]
-CHECKS = (("Verify", "via SSM Session Manager + AWS CLI"), icon(SystemsManager), [
+CHECKS = (("Verify", "via SSM + AWS CLI"), icon(SystemsManager), [
     ("T0", "describe-instance-information", "consumer host Online", "mgmt"),
-    ("T1", "describe-vpc-endpoint-service-configurations", "Endpoint Service Available · accept=false", "shared"),
-    ("T2", "describe-vpc-endpoints State", "Interface VPC Endpoint available", "shared"),
-    ("T3", "curl http://$EP_DNS (across the overlap)", "✓ proof page from the provider VPC", "shared"),
-    ("T4a", "describe-vpc-peering-connections", "✘ empty (no Peering / Transit Gateway)", "deny"),
-    ("T4b", "curl http://$SVC_IP (direct private IP)", "✘ no route · endpoint still works", "deny"),
+    ("T1", "describe-vpc-endpoint-service-configurations", "ServiceState Available · accept=false", "shared"),
+    ("T2", "describe-vpc-endpoints State", "available", "shared"),
+    ("T3", "curl http://$EP_DNS (across overlap)", "proof page from VPC A", "shared"),
+    ("T4a", "describe-vpc-peering-connections", "empty (no peering/TGW)", "deny"),
+    ("T4b", "curl http://$SVC_IP (direct L3)", "UNREACHABLE · endpoint still works", "deny"),
 ])
 FOOTER = ("Cost & teardown", [
-    "Network Load Balancer (internal) ≈ $0.0225/h + LCU",
-    "Interface VPC Endpoint ≈ $0.01/AZ-h (1 AZ) + data",
-    "2× EC2 t4g.micro ≈ $0.017/h",
+    "internal NLB ≈ $0.0225/h + LCU",
+    "interface endpoint ≈ $0.01/AZ-h (1 AZ) + data",
+    "2× t4g.micro ≈ $0.017/h",
     "2× public IPv4 ≈ $0.01/h",
     "≈ $0.06/h → ./teardown.sh when done",
 ])
@@ -249,87 +248,63 @@ with Diagram("", filename=OUT, outformat="png", show=False, direction="LR", grap
     # invisible wrapper: its bottom label carries every full-width row (section 2 + footer)
     with box("wrapper", dict(label=section2_html(STEPS, BANNERS, CHECKS), labelloc="b",
                              labeljust="c", pencolor="transparent", bgcolor="transparent", margin="0")):
-        with box("section1", dict(label=section_label(1, "AWS resources created & how traffic reaches the service", W - 16),
+        with box("section1", dict(label=section_label(1, "Topology & traffic flow", W - 16),
                                   labelloc="t", labeljust="l", style="rounded", color="#D5DBE3",
                                   bgcolor=PANEL, margin="22")):
-            # column 1 — consumer VPC B (AWS objects; title matches content)
-            with group("Consumer VPC · 10.0.0.0/16", "main"):
-                client = node(card("EC2 instance · Subnet · SG (consumer)", [
-                    "Subnet 10.0.0.0/24 (public) · t4g.micro",
-                    "Security Group: egress only (the host just curls out)",
-                    "no SSH · reaches the service via the endpoint DNS",
-                ], "main", icon(EC2Instance), width=340))
-                eni = node(card("Interface VPC Endpoint (ENI)", [
-                    "ENI with a private IP in the consumer Subnet",
-                    "terminates the consumer's TCP (not a route)",
-                    "Security Group: ingress 80/443 from 10.0.0.0/16",
-                    "private DNS disabled · resolves the vpce-… name",
-                ], "main", icon(VPCElasticNetworkInterface), width=340))
-                b_rt = node(card("Route table (consumer)", [], "main", icon(RouteTable), width=340,
-                                 rows=[("0.0.0.0/0", "→ Internet Gateway (SSM only)", "main"),
-                                       ("10.0.0.0/16", "→ local (own VPC) — NO route to provider", "deny")]))
+            # column 1 — consumer VPC B
+            with group("VPC B · consumer · 10.0.0.0/16", "main"):
+                client = node(card("consumer test host", ["public 10.0.0.0/24 · t4g.micro",
+                                                          "SSM · no SSH · curls $EP_DNS",
+                                                          "RT 0/0 → IGW (SSM only)"], "main", icon(EC2Instance)))
+                eni = node(card("interface endpoint ENI", [
+                    "private IP inside B's own subnet",
+                    "SG: 80/443 from 10.0.0.0/16",
+                    "private_dns_enabled = false",
+                    "resolves the vpce-… DNS name",
+                ], "main", icon(VPCElasticNetworkInterface), width=330))
 
-            # column 2 — overlapping CIDR (hero) + PrivateLink endpoint service
-            with group("PrivateLink · endpoint DNS, not L3", "shared"):
-                overlap = node(card("Overlapping CIDR 10.0.0.0/16", [
-                    "BOTH VPCs use the SAME block — on purpose",
-                    "consumer talks only to the ENI (a private IP in ITS VPC)",
-                    "no route between the two 10.0.0.0/16 is ever consulted",
-                    "the overlap is irrelevant — what Peering / TGW can't do",
-                ], "deny", letter="★", width=360))
-                pl = node(card("Endpoint Service (NLB-backed)", [
+            # column 2 — overlap note + PrivateLink
+            with group("PrivateLink · tunnels ENI → NLB", "shared"):
+                overlap = node(card("overlapping CIDR 10.0.0.0/16", [
+                    "A and B share the SAME block",
+                    "consumer talks to the ENI (IP in B)",
+                    "no route between the two 10.0/16 ever consulted",
+                    "overlap irrelevant — what TGW/peering can't do",
+                ], "deny", letter="⚠", width=340))
+                pl = node(card("endpoint service (PrivateLink)", [
                     "com.amazonaws.vpce.<region>.vpce-svc-xxxx",
-                    "acceptance not required (accept=false)",
-                    "no VPC Peering / Transit Gateway — the only path in",
-                ], "shared", icon(Endpoint), width=360))
+                    "acceptance_required = false",
+                    "no peering / TGW — only path in",
+                ], "shared", icon(Endpoint), width=340))
 
             # column 3 — provider VPC A
-            with group("Provider VPC · 10.0.0.0/16 (overlaps!)", "hub"):
-                nlb = node(card("Network Load Balancer (internal) :80", [
-                    "internal NLB · the only thing an Endpoint Service can front",
-                    "Target group net-lab-pl-tg · TCP :80 · health TCP 80",
-                ], "hub", icon(ElbNetworkLoadBalancer), width=360))
-                svc = node(card("EC2 instance · Subnet · SG (service)", [
-                    "Subnet 10.0.0.0/24 (public) · t4g.micro",
-                    "python3 -m http.server :80 (systemd)",
-                    "serves 'hello from PrivateLink provider'",
-                ], "hub", icon(EC2Instance), width=360))
+            with group("VPC A · provider · 10.0.0.0/16 (overlaps!)", "hub"):
+                nlb = node(card("internal NLB :80", ["network LB · internal only",
+                                                     "TG net-lab-pl-tg · TCP :80 · health TCP 80",
+                                                     "the only thing PrivateLink can publish"], "hub",
+                                icon(ElbNetworkLoadBalancer), width=330))
+                svc = node(card("service EC2 (labhttp)", ["public 10.0.0.0/24 · t4g.micro",
+                                                          "python3 -m http.server :80 (systemd)",
+                                                          "serves 'hello from PrivateLink provider (VPC A)'"],
+                                "hub", icon(EC2Instance), width=330))
 
             # column 4 — management
             with group("Management", "mgmt"):
                 ssm = node(card("SSM Session Manager", ["2 hosts: consumer + service", "no SSH, no key pair"],
-                                "mgmt", icon(SystemsManager), width=280))
-                role = node(card("IAM role + instance profile", ["net-lab-pl-ssm",
-                                                                 "AmazonSSMManagedInstanceCore · reused by 4-ec2"],
-                                 "mgmt", icon(IAMRole), width=280))
+                                "mgmt", icon(SystemsManager), width=270))
+                role = node(card("net-lab-pl-ssm", ["IAM role + instance profile (in 2-provider)",
+                                                    "AmazonSSMManagedInstanceCore · reused by 4-ec2"], "mgmt",
+                                 icon(IAMRole), width=270))
 
-            # column 5 — legend (colour key)
-            with group("Legend", "main"):
-                legend = node(card("Legend", [], "main", letter="❖", width=300,
-                                   rows=[("reaches", "endpoint path up  ✓", "shared"),
-                                         ("blocked", "no route between VPCs  ✘", "deny"),
-                                         ("provider", "NLB + service (VPC A)", "hub"),
-                                         ("consumer", "host + endpoint ENI (VPC B)", "main"),
-                                         ("mgmt", "SSM / IAM", "mgmt")]))
+            # data path: consumer host → ENI ══PrivateLink══ NLB → service EC2
+            flow(client, eni, "main")
+            flow(eni, pl, "shared")
+            flow(pl, nlb, "shared")
+            flow(nlb, svc, "hub")
 
-            # data path that WORKS — solid, ✓ verdict: consumer host → ENI ══PrivateLink══ NLB → service EC2
-            client >> Edge(label="  ✓ TCP to the ENI (own VPC)  ", color=ROLE["main"][0], penwidth="2.4",
-                           fontname=BOLD, fontcolor=ROLE["main"][0]) >> eni
-            eni >> Edge(label="  ✓ PrivateLink tunnel  ", color=ROLE["shared"][0], penwidth="2.4",
-                        fontname=BOLD, fontcolor=ROLE["shared"][0]) >> pl
-            pl >> Edge(label="  ✓ reaches across the overlapping 10.0.0.0/16  ", color=ROLE["shared"][0],
-                       penwidth="2.4", fontname=BOLD, fontcolor=ROLE["shared"][0]) >> nlb
-            nlb >> Edge(label="  ✓ to target :80  ", color=ROLE["hub"][0], penwidth="2.4",
-                        fontname=BOLD, fontcolor=ROLE["hub"][0]) >> svc
-            # the path that DOESN'T exist — dashed RED, ✘ verdict: direct consumer→provider private IP has no route
-            client >> Edge(label=" ✘ direct to provider private IP · no route (not L3 routing) ",
-                           color=ROLE["deny"][0], style="dashed", penwidth="2.4",
-                           fontname=BOLD, fontcolor=ROLE["deny"][0], constraint="false") >> svc
-
-            svc >> Edge(style="invis") >> ssm      # Management after the VPCs
-            role >> Edge(style="invis") >> legend  # Legend column last
+            svc >> Edge(style="invis") >> ssm  # keeps Management as the last column
             # column ordering only: within a rank=same column (LR) a flat edge a → b puts b ABOVE a,
             # so each list below is written top → bottom and wired in reverse.
-            for col in [[client, eni, b_rt], [overlap, pl], [nlb, svc], [ssm, role], [legend]]:
+            for col in [[client, eni], [overlap, pl], [nlb, svc], [ssm, role]]:
                 for upper, lower in zip(col, col[1:]):
                     lower >> Edge(style="invis") >> upper
