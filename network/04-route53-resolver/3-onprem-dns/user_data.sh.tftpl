@@ -9,10 +9,23 @@ set -euxo pipefail
 
 dnf install -y dnsmasq bind-utils
 
+PRIMARY_IF=$(ls /sys/class/net | grep -v '^lo$' | head -1)
+
+# Two separate AL2023 package-default /etc/dnsmasq.conf quirks, both hit in practice:
+#  1. It ships "bind-interfaces" — combined with this drop-in's "listen-address=0.0.0.0", dnsmasq
+#     tries to bind 0.0.0.0:53 twice in its own startup and fails with "Address already in use"
+#     even though nothing else holds the port.
+#  2. With bind-interfaces gone and no static "interface=" list, dnsmasq falls back to validating
+#     each packet's arrival interface dynamically via IP_PKTINFO + a netlink RTM_GETADDR query —
+#     confirmed via strace to run per-query but never actually answer traffic arriving on the
+#     real NIC (silently dropped, no log line, no error). Listing interfaces statically instead
+#     skips that dynamic path entirely and just works.
+sed -i '/^bind-interfaces$/d' /etc/dnsmasq.conf
+grep -q "^interface=$PRIMARY_IF\$" /etc/dnsmasq.conf || echo "interface=$PRIMARY_IF" >> /etc/dnsmasq.conf
+
 cat >/etc/dnsmasq.d/corp-local.conf <<'EOF'
 # Listen on all interfaces (the ENI private IP) so AWS-forwarded queries arrive.
 listen-address=0.0.0.0
-bind-interfaces
 # Do not read /etc/resolv.conf for upstreams — we declare them explicitly below.
 no-resolv
 
