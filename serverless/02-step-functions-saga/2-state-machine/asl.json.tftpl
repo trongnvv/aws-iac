@@ -1,0 +1,39 @@
+{
+  "Comment": "Order saga — reserve, then charge (fails on purpose). Success ships; failure runs the compensating action (release) instead of leaving a dangling reservation.",
+  "StartAt": "ReserveInventory",
+  "States": {
+    "ReserveInventory": {
+      "Type": "Task",
+      "Resource": "${reserve_inventory_arn}",
+      "Next": "ChargePayment"
+    },
+    "ChargePayment": {
+      "Type": "Task",
+      "Resource": "${charge_payment_arn}",
+      "Next": "ShipOrder",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ReleaseInventory"
+        }
+      ]
+    },
+    "ReleaseInventory": {
+      "Type": "Task",
+      "Resource": "${release_inventory_arn}",
+      "Comment": "Compensating action — undoes ReserveInventory because ChargePayment failed",
+      "Next": "OrderFailed"
+    },
+    "OrderFailed": {
+      "Type": "Fail",
+      "Error": "PaymentDeclined",
+      "Cause": "Payment failed; inventory reservation was released"
+    },
+    "ShipOrder": {
+      "Type": "Task",
+      "Resource": "${ship_order_arn}",
+      "End": true
+    }
+  }
+}

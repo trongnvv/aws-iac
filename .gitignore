@@ -16,6 +16,8 @@ override.tf.json
 .terraformrc
 terraform.rc
 **__pycache__/
+# archive_file output (serverless/*/**/.build/*.zip) — rebuilt from src/ on every apply
+**/.build/
 # ── Local handoff / secrets (never commit real tokens/creds) ──────────────────
 env.sh
 .env

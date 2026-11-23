@@ -74,6 +74,7 @@ you tackle them changes:
 ---
 
 ## Lab 1 — TGW hub + segmentation  (`01-tgw-hub/`)
+> Doing this by hand in the console instead of Terraform? → [`01-tgw-hub/CONSOLE.md`](01-tgw-hub/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph shared["VPC shared 10.0/16"]
@@ -128,7 +129,37 @@ graph LR
   `curl -s https://checkip.amazonaws.com` returns the **shared VPC's NAT EIP** (`tofu output nat_public_ip`).
 - Note: NAT Gateway ≈ $0.045/hour + data — `(cd 5-egress && tofu destroy)` after.
 
+### Lab 1 · optional — cross-region TGW peering (layer `6-region2-peering/`, `enable_peering=true`)
+Folded into lab 1, same off-by-default convention as `5-egress`. A second region gets its own small
+VPC + TGW, peered to lab 1's hub — the hands-on proof for the "TGW Sharing (RAM) vs Peering vs
+Cloud WAN" note in the vault's `Concept.md`: **peering doesn't propagate routes**, every route below
+is static, added by hand, on both sides.
+```mermaid
+graph LR
+  subgraph home["Home region — lab 1's existing TGW"]
+    shared["shared VPC 10.0/16"]
+    hrt["shared RT<br/>+ static route: 10.99/16 → peering"]
+  end
+  subgraph r2["Region 2 — new"]
+    v2["region2 VPC 10.99/16"]
+    r2rt["region2 RT<br/>+ static route: 10.0/16 → peering"]
+  end
+  shared --- hrt
+  hrt ==|"TGW Peering attachment<br/>(static routes only)"| r2rt
+  r2rt --- v2
+```
+- **Enable:** `(cd 01-tgw-hub/6-region2-peering && tofu init && tofu apply -var enable_peering=true)`
+  — needs lab 1's `1-vpc`/`2-tgw`/`3-ssm` layers already applied (reads their remote state).
+- **What:** `aws_ec2_transit_gateway_peering_attachment` (requester, home region) +
+  `_accepter` (peer region) — same-account peering still needs an explicit accept, just not a
+  separate AWS account approving it. Each side gets its own TGW route table association + **one**
+  static route to the other side's CIDR; nothing in lab 1's existing routes/propagation changes.
+- **Verify:** SSM into the home `shared` test host and the new `region2` test host (`tofu output
+  region2_test_instance`) → ping each other's private IP across the peering link.
+- Note: a second region's resources (TGW + VPC + EC2) — `(cd 6-region2-peering && tofu apply -var enable_peering=false)` to tear down just this layer, or full `./teardown.sh` for the whole lab.
+
 ## Lab 2 — Site-to-Site VPN → TGW
+> By hand instead of Terraform? → [`02-vpn/CONSOLE.md`](02-vpn/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph onprem["'On-prem' VPC 192.168/16"]
@@ -149,6 +180,7 @@ graph LR
         (IPsec overhead → effective MSS ≈ 1379) → add **MSS clamping**; confirm no fragmentation.
 
 ## Lab 3 — PrivateLink
+> By hand instead of Terraform? → [`03-privatelink/CONSOLE.md`](03-privatelink/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph B["VPC B (consumer) 10.0/16"]
@@ -168,6 +200,7 @@ graph LR
         cross-AZ data fee).
 
 ## Lab 4 — Route 53 Resolver (hybrid DNS)
+> By hand instead of Terraform? → [`04-route53-resolver/CONSOLE.md`](04-route53-resolver/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph aws["AWS VPC"]
@@ -188,6 +221,7 @@ graph LR
   - [ ] **Reverse DNS (PTR):** verify PTR lookups of internal IPs both directions.
 
 ## Lab 5 — VPC Peering vs TGW (trade-offs & limits)
+> By hand instead of Terraform? → [`05-peering/CONSOLE.md`](05-peering/CONSOLE.md)
 ```mermaid
 graph LR
   A["VPC A 10.0/16"] ---|"Peering A-B + routes"| B["VPC B 10.1/16"]
@@ -201,6 +235,7 @@ graph LR
   - [ ] **MTU:** jumbo **9001** on Peering (intra-region) vs **8500** max over TGW vs **~1500** over VPN.
 
 ## Lab 6 — Direct Connect → TGW (private dedicated link)
+> By hand instead of Terraform? → [`06-direct-connect/CONSOLE.md`](06-direct-connect/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph onprem["On-prem (router at a DX location)"]
@@ -226,6 +261,7 @@ so it can't be fully provisioned by IaC.
   - [ ] **Resilience:** 2 connections / 2 DX locations; DX primary + **VPN backup** (lower BGP local-pref).
 
 ## Lab 7 — VPC Lattice (L7 service-to-service)
+> By hand instead of Terraform? → [`07-lattice/CONSOLE.md`](07-lattice/CONSOLE.md)
 ```mermaid
 graph LR
   subgraph net["Lattice Service Network (+ IAM auth policy)"]
